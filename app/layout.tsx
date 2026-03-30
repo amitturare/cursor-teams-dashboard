@@ -3,8 +3,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Cursor Team Usage Dashboard",
-  description: "Minimal monthly team usage insights for Cursor"
+  title: "AI SparkLine",
+  description: "Team usage insights for Cursor"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

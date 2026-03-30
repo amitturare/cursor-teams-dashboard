@@ -57,11 +57,14 @@ function startOfUtcMonth(date: Date, monthOffset = 0) {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + monthOffset, 1, 0, 0, 0, 0);
 }
 
+const MONTH_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+] as const;
+
 function monthLabelFromStart(startMs: number) {
   const date = new Date(startMs);
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  return `${year}-${month}`;
+  return `${MONTH_SHORT[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
 function dayKey(timestampMs: number) {

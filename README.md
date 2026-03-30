@@ -1,6 +1,6 @@
-# Cursor Team Usage Dashboard
+# AI SparkLine
 
-Minimal, readable team usage dashboard backed by the Cursor Team Admin API.
+Team usage dashboard backed by the Cursor Team Admin API.
 
 ## What this dashboard answers
 
