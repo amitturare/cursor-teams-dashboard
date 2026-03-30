@@ -5,8 +5,7 @@ import { getDailyUsageData, getTeamMembers } from "@/lib/cursor-admin";
 import { buildUserWindowMetrics, getSelectableWindows, resolveWindowSelection } from "@/lib/metrics";
 
 const QuerySchema = z.object({
-  window: z.string().optional(),
-  months: z.coerce.number().int().min(1).max(24).optional()
+  window: z.string().optional()
 });
 
 export const dynamic = "force-dynamic";
@@ -25,21 +24,13 @@ type CachedMetricsResponse = {
 
 const metricsCache = new Map<string, { expiresAt: number; value: CachedMetricsResponse }>();
 
-function mapLegacyMonthsToWindow(months: number | undefined) {
-  if (months === 1) {
-    return "current-month";
-  }
-  return undefined;
-}
-
 export async function GET(request: NextRequest) {
   try {
     const query = QuerySchema.parse({
-      window: request.nextUrl.searchParams.get("window") || undefined,
-      months: request.nextUrl.searchParams.get("months") || undefined
+      window: request.nextUrl.searchParams.get("window") || undefined
     });
 
-    const selectedWindow = resolveWindowSelection(query.window || mapLegacyMonthsToWindow(query.months));
+    const selectedWindow = resolveWindowSelection(query.window);
     const cacheKey = `window:${selectedWindow.id}`;
     const cached = metricsCache.get(cacheKey);
 
@@ -52,7 +43,6 @@ export async function GET(request: NextRequest) {
     const rows = buildUserWindowMetrics({
       teamMembers,
       dailyUsageData,
-      usageEvents: [],
       window: selectedWindow
     });
 
@@ -61,8 +51,8 @@ export async function GET(request: NextRequest) {
       definitions: {
         favoriteModel:
           "Based on Cursor daily usage data field `mostUsedModel` (documented in `/teams/daily-usage-data`). This dashboard picks the model that appears most often across the user's daily rows in the selected window.",
-        usagePerUser:
-          "Sum of documented daily usage fields `agentRequests + composerRequests + chatRequests` from `/teams/daily-usage-data`, aggregated across the selected window.",
+        usage:
+          "Sum of documented daily usage fields `agentRequests + composerRequests + chatRequests + cmdkUsages` from `/teams/daily-usage-data`, aggregated across the selected window.",
         productivity:
           "Derived from documented daily usage fields: `(acceptedLinesAdded + acceptedLinesDeleted) / (agentRequests + composerRequests + chatRequests)`, aggregated across the selected window.",
         agentEfficiency:

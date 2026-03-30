@@ -1,23 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-
-interface MetricRow {
-	windowId: string;
-	windowLabel: string;
-	userEmail: string;
-	userName: string;
-	role: string;
-	favoriteModel: string;
-	usageEvents: number;
-	usageCount: number;
-	requestCostUnits: number;
-	totalAiRequests: number;
-	productivityScore: number;
-	agentEfficiency: number;
-	tabEfficiency: number;
-	adoptionRate: number;
-}
+import type { UserWindowMetricRow as MetricRow } from "@/lib/metrics";
 
 interface ApiResponse {
 	generatedAt: string;
@@ -32,6 +16,7 @@ interface UserRecord {
 	email: string;
 	name: string;
 	role: string;
+	isRemoved: boolean;
 }
 
 interface UserGroup {
@@ -42,7 +27,8 @@ interface UserGroup {
 
 type FilterCategory = "all" | "groups" | "individuals";
 
-const responseCache = new Map<string, ApiResponse>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const responseCache = new Map<string, { data: ApiResponse; fetchedAt: number }>();
 const inflightRequests = new Map<string, Promise<ApiResponse>>();
 const GROUPS_KEY = "cursor-dashboard-user-groups";
 
@@ -68,15 +54,12 @@ function formatDateRange(startMs: number | undefined, endMs: number | undefined)
 }
 
 function createGroupId() {
-	if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-		return crypto.randomUUID();
-	}
-	return `group-${Date.now()}`;
+	return crypto.randomUUID();
 }
 
 async function loadMetrics(windowId: string): Promise<ApiResponse> {
 	const cached = responseCache.get(windowId);
-	if (cached) return cached;
+	if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached.data;
 	const existingRequest = inflightRequests.get(windowId);
 	if (existingRequest) return existingRequest;
 	const request = fetch(`/api/team-metrics?window=${windowId}`, { cache: "no-store" })
@@ -86,7 +69,7 @@ async function loadMetrics(windowId: string): Promise<ApiResponse> {
 				throw new Error(body.error || `Request failed with ${response.status}`);
 			}
 			const body = (await response.json()) as ApiResponse;
-			responseCache.set(windowId, body);
+			responseCache.set(windowId, { data: body, fetchedAt: Date.now() });
 			return body;
 		})
 		.finally(() => {
@@ -112,36 +95,57 @@ function resolveUserName(name: string | undefined, email: string): string {
 
 function sanitizeGroups(groups: UserGroup[], validEmails: Set<string>) {
 	return groups
+		.filter((group) => !isSystemGroup(group.id))
 		.map((group) => ({
 			...group,
 			userEmails: group.userEmails.filter((email) => validEmails.has(email)),
 		}))
-		.filter((group) => group.name.trim().length > 0);
+		.filter((group) => group.name.trim().length > 0 && group.userEmails.length > 0);
 }
 
 const SYSTEM_REMOVED_GROUP_ID = "system-removed-users";
 const SYSTEM_REMOVED_GROUP_NAME = "Removed";
+const SYSTEM_MEMBER_GROUP_ID = "system-member-users";
+const SYSTEM_MEMBER_GROUP_NAME = "Member";
+
+function isSystemGroup(groupId: string) {
+	return groupId === SYSTEM_REMOVED_GROUP_ID || groupId === SYSTEM_MEMBER_GROUP_ID;
+}
 
 /**
- * Ensures a "Removed" group exists with all users whose role is removed, and that those
- * emails are not listed on other groups (single-group membership model).
+ * Rebuilds both system groups ("Member" and "Removed") from the current user list.
+ * - "Removed": all isRemoved users (auto-managed, read-only)
+ * - "Member": all non-removed users not assigned to any custom group (auto-managed, read-only)
+ * Custom groups are preserved; removed emails are stripped from them.
  */
-function applyRemovedUsersGroupSync(groups: UserGroup[], users: UserRecord[]): UserGroup[] {
-	const removedList = users
-		.filter((u) => u.role.toLowerCase() === "removed")
+function applySystemGroupsSync(groups: UserGroup[], users: UserRecord[]): UserGroup[] {
+	const removedEmails = users.filter((u) => u.isRemoved).map((u) => u.email).sort();
+	const removedSet = new Set(removedEmails);
+
+	const customGroups = groups
+		.filter((g) => !isSystemGroup(g.id))
+		.map((g) => ({ ...g, userEmails: g.userEmails.filter((e) => !removedSet.has(e)) }));
+
+	const memberEmails = users
+		.filter((u) => !u.isRemoved)
 		.map((u) => u.email)
 		.sort();
-	const removedSet = new Set(removedList);
-	let next = groups
-		.filter((g) => g.id !== SYSTEM_REMOVED_GROUP_ID && g.name !== SYSTEM_REMOVED_GROUP_NAME)
-		.map((g) => ({
-			...g,
-			userEmails: g.userEmails.filter((e) => !removedSet.has(e)),
-		}));
-	if (removedList.length === 0) {
-		return next;
+
+	const result: UserGroup[] = [];
+	if (memberEmails.length > 0) {
+		result.push({ id: SYSTEM_MEMBER_GROUP_ID, name: SYSTEM_MEMBER_GROUP_NAME, userEmails: memberEmails });
 	}
-	return [{ id: SYSTEM_REMOVED_GROUP_ID, name: SYSTEM_REMOVED_GROUP_NAME, userEmails: removedList }, ...next];
+	if (removedEmails.length > 0) {
+		result.push({ id: SYSTEM_REMOVED_GROUP_ID, name: SYSTEM_REMOVED_GROUP_NAME, userEmails: removedEmails });
+	}
+	return [...result, ...customGroups];
+}
+
+function addUsersToGroup(groups: UserGroup[], emails: string[], targetGroupId: string): UserGroup[] {
+	return groups.map((group) => {
+		if (isSystemGroup(group.id) || group.id !== targetGroupId) return group;
+		return { ...group, userEmails: Array.from(new Set([...group.userEmails, ...emails])).sort() };
+	});
 }
 
 export function Dashboard() {
@@ -233,7 +237,8 @@ export function Dashboard() {
 				map.set(row.userEmail, {
 					email: row.userEmail,
 					name: resolveUserName(row.userName, row.userEmail),
-					role: row.role,
+					role: row.isRemoved ? "Removed" : row.role,
+					isRemoved: row.isRemoved,
 				});
 			}
 		}
@@ -254,18 +259,22 @@ export function Dashboard() {
 			} catch {
 				nextGroups = [];
 			}
-			nextGroups = applyRemovedUsersGroupSync(nextGroups, users);
+			nextGroups = applySystemGroupsSync(nextGroups, users);
 			setGroups(nextGroups);
 			setActiveGroupId(nextGroups[0]?.id ?? null);
 			setPreferencesReady(true);
 			return;
 		}
-		setGroups((current) => applyRemovedUsersGroupSync(sanitizeGroups(current, validEmails), users));
+		setGroups((current) => applySystemGroupsSync(sanitizeGroups(current, validEmails), users));
 	}, [users, preferencesReady]);
 
 	useEffect(() => {
 		if (!preferencesReady) return;
-		window.localStorage.setItem(GROUPS_KEY, JSON.stringify(groups));
+		try {
+			window.localStorage.setItem(GROUPS_KEY, JSON.stringify(groups.filter((g) => !isSystemGroup(g.id))));
+		} catch {
+			// storage unavailable or full — groups won't persist this session
+		}
 	}, [groups, preferencesReady]);
 
 	useEffect(() => {
@@ -334,14 +343,13 @@ export function Dashboard() {
 		return analyticsRows.reduce(
 			(acc, row) => {
 				acc.usageCount += row.usageCount;
-				acc.aiRequests += row.totalAiRequests;
 				acc.productivity += row.productivityScore;
 				acc.agentEfficiency += row.agentEfficiency;
 				acc.tabEfficiency += row.tabEfficiency;
 				acc.adoption += row.adoptionRate;
 				return acc;
 			},
-			{ usageCount: 0, aiRequests: 0, productivity: 0, agentEfficiency: 0, tabEfficiency: 0, adoption: 0 },
+			{ usageCount: 0, productivity: 0, agentEfficiency: 0, tabEfficiency: 0, adoption: 0 },
 		);
 	}, [analyticsRows]);
 
@@ -410,37 +418,36 @@ export function Dashboard() {
 	}
 
 	function assignUserToGroup(email: string, groupId: string) {
-		setGroups((current) =>
-			current.map((group) => {
-				const withoutUser = group.userEmails.filter((item) => item !== email);
-				if (group.id !== groupId) return { ...group, userEmails: withoutUser };
-				return { ...group, userEmails: [...withoutUser, email].sort() };
-			}),
-		);
+		setGroups((current) => applySystemGroupsSync(addUsersToGroup(current, [email], groupId), users));
 	}
 
 	function clearUserGroup(email: string) {
-		setGroups((current) =>
-			current.map((group) => ({ ...group, userEmails: group.userEmails.filter((item) => item !== email) })),
-		);
+		setGroups((current) => {
+			const cleared = current.map((group) =>
+				isSystemGroup(group.id) ? group : { ...group, userEmails: group.userEmails.filter((item) => item !== email) },
+			);
+			return applySystemGroupsSync(cleared, users);
+		});
 	}
 
 	function addGroup() {
-		const nextGroup: UserGroup = { id: createGroupId(), name: `Group ${groups.length + 1}`, userEmails: [] };
+		const customCount = groups.filter((g) => !isSystemGroup(g.id)).length;
+		const nextGroup: UserGroup = { id: createGroupId(), name: `Group ${customCount + 1}`, userEmails: [] };
 		setGroups((current) => [...current, nextGroup]);
 		setActiveGroupId(nextGroup.id);
 	}
 
 	function renameActiveGroup(name: string) {
-		if (!activeGroupId) return;
+		if (!activeGroupId || isSystemGroup(activeGroupId)) return;
 		setGroups((current) => current.map((g) => (g.id === activeGroupId ? { ...g, name } : g)));
 	}
 
 	function deleteGroup(groupId: string) {
+		if (isSystemGroup(groupId)) return;
 		const deletedGroup = groups.find((g) => g.id === groupId);
 		setGroups((current) => {
 			const filtered = current.filter((g) => g.id !== groupId);
-			return applyRemovedUsersGroupSync(filtered, users);
+			return applySystemGroupsSync(filtered, users);
 		});
 		setBulkStatus(null);
 		setBulkEmails("");
@@ -453,13 +460,13 @@ export function Dashboard() {
 		}
 		if (activeGroupId === groupId) {
 			const filtered = groups.filter((g) => g.id !== groupId);
-			const merged = applyRemovedUsersGroupSync(filtered, users);
+			const merged = applySystemGroupsSync(filtered, users);
 			setActiveGroupId(merged[0]?.id ?? null);
 		}
 	}
 
 	function addEmailsToActiveGroup() {
-		if (!activeGroupId) return;
+		if (!activeGroupId || isSystemGroup(activeGroupId)) return;
 		const parsedEmails = bulkEmails
 			.split(",")
 			.map((v) => v.trim().toLowerCase())
@@ -474,13 +481,7 @@ export function Dashboard() {
 			setBulkStatus("No matching team members found for the provided emails.");
 			return;
 		}
-		setGroups((current) =>
-			current.map((group) => {
-				const withoutMovedUsers = group.userEmails.filter((e) => !validEmails.includes(e));
-				if (group.id !== activeGroupId) return { ...group, userEmails: withoutMovedUsers };
-				return { ...group, userEmails: Array.from(new Set([...withoutMovedUsers, ...validEmails])).sort() };
-			}),
-		);
+		setGroups((current) => applySystemGroupsSync(addUsersToGroup(current, validEmails, activeGroupId), users));
 		setBulkEmails("");
 		setBulkStatus(
 			skippedCount > 0
@@ -646,7 +647,6 @@ export function Dashboard() {
 								<table>
 									<thead>
 										<tr>
-											<th>Total Usage</th>
 											<th>Total AI Requests</th>
 											<th>Avg Productivity</th>
 											<th>Avg Agent Eff.</th>
@@ -657,7 +657,6 @@ export function Dashboard() {
 									<tbody>
 										<tr>
 											<td>{teamRollup.usageCount}</td>
-											<td>{teamRollup.aiRequests}</td>
 											<td>{(teamRollup.productivity / rowCount).toFixed(2)}</td>
 											<td>{pct(teamRollup.agentEfficiency / rowCount)}</td>
 											<td>{pct(teamRollup.tabEfficiency / rowCount)}</td>
@@ -967,18 +966,20 @@ export function Dashboard() {
 												{activeGroupId === group.id ? "selected" : "open"}
 											</span>
 										</button>
-										<button
-											type="button"
-											className="groupDeleteButton"
-											onClick={() => deleteGroup(group.id)}
-											aria-label={`Delete ${group.name}`}
-										>
-											Delete
-										</button>
+										{!isSystemGroup(group.id) ? (
+											<button
+												type="button"
+												className="groupDeleteButton"
+												onClick={() => deleteGroup(group.id)}
+												aria-label={`Delete ${group.name}`}
+											>
+												Delete
+											</button>
+										) : null}
 									</div>
 								))}
 							</div>
-							{activeGroup ? (
+							{activeGroup && !isSystemGroup(activeGroup.id) ? (
 								<div className="groupEditor">
 									<div className="groupEditorHeader">
 										<span className="groupEditorTitle">Configure</span>
@@ -1004,6 +1005,13 @@ export function Dashboard() {
 									</div>
 									{bulkStatus ? <p className="groupStatus">{bulkStatus}</p> : null}
 								</div>
+							) : activeGroup && isSystemGroup(activeGroup.id) ? (
+								<div className="groupEditor">
+									<div className="groupEditorHeader">
+										<span className="groupEditorTitle">{activeGroup.name}</span>
+									</div>
+									<p className="muted tiny">This group is managed automatically and cannot be edited.</p>
+								</div>
 							) : null}
 						</aside>
 
@@ -1024,6 +1032,7 @@ export function Dashboard() {
 									<tbody>
 										{users.map((user) => {
 											const assignedGroup = groups.find((g) => g.userEmails.includes(user.email));
+											const customAssignedGroup = assignedGroup && !isSystemGroup(assignedGroup.id) ? assignedGroup : null;
 											return (
 												<tr key={user.email}>
 													<td>
@@ -1035,14 +1044,15 @@ export function Dashboard() {
 													<td>{user.role}</td>
 													<td>
 														<select
-															value={assignedGroup?.id || ""}
+															value={customAssignedGroup?.id || ""}
+															disabled={user.isRemoved}
 															onChange={(e) => {
 																if (e.target.value) assignUserToGroup(user.email, e.target.value);
 																else clearUserGroup(user.email);
 															}}
 														>
 															<option value="">No Group</option>
-															{groups.map((g) => (
+															{groups.filter((g) => !isSystemGroup(g.id)).map((g) => (
 																<option key={g.id} value={g.id}>
 																	{g.name}
 																</option>

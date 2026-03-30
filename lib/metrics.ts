@@ -1,4 +1,4 @@
-import type { DailyUsageRow, TeamMember, UsageEvent } from "@/lib/cursor-admin";
+import type { DailyUsageRow, TeamMember } from "@/lib/cursor-admin";
 
 export interface TimeWindow {
   id: string;
@@ -14,11 +14,9 @@ export interface UserWindowMetricRow {
   userEmail: string;
   userName: string;
   role: string;
+  isRemoved: boolean;
   favoriteModel: string;
-  usageEvents: number;
   usageCount: number;
-  requestCostUnits: number;
-  totalAiRequests: number;
   productivityScore: number;
   agentEfficiency: number;
   tabEfficiency: number;
@@ -31,8 +29,8 @@ interface Accumulator {
   userEmail: string;
   userName: string;
   role: string;
-  usageEvents: number;
-  requestCostUnits: number;
+  isRemoved: boolean;
+  cmdkRequests: number;
   modelCounts: Map<string, number>;
   activeDays: Set<string>;
   totalTabsShown: number;
@@ -71,16 +69,7 @@ function dayKey(timestampMs: number) {
   return new Date(timestampMs).toISOString().slice(0, 10);
 }
 
-function toMs(value: string | number) {
-  if (typeof value === "number") {
-    return value;
-  }
-
-  const parsed = Number(value);
-  return Number.isNaN(parsed) ? Date.parse(value) : parsed;
-}
-
-function n(value: number | undefined): number {
+function n(value: number | undefined | null): number {
   return value ?? 0;
 }
 
@@ -98,25 +87,14 @@ function pickFavoriteModel(modelCounts: Map<string, number>) {
   return bestModel;
 }
 
-function resolveDailyUserEmail(row: DailyUsageRow): string | null {
-  const possible = [row.userEmail, row.memberEmail, row.email];
-
-  for (const value of possible) {
-    if (typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  }
-
-  return null;
-}
-
 function getOrCreate(
   map: Map<string, Accumulator>,
   windowId: string,
   windowLabel: string,
   userEmail: string,
   userName: string,
-  role: string
+  role: string,
+  isRemoved = false
 ) {
   const key = `${windowId}::${userEmail}`;
   const existing = map.get(key);
@@ -130,8 +108,8 @@ function getOrCreate(
     userEmail,
     userName,
     role,
-    usageEvents: 0,
-    requestCostUnits: 0,
+    isRemoved,
+    cmdkRequests: 0,
     modelCounts: new Map<string, number>(),
     activeDays: new Set<string>(),
     totalTabsShown: 0,
@@ -211,7 +189,6 @@ export function resolveWindowSelection(windowId: string | undefined) {
 export function buildUserWindowMetrics(params: {
   teamMembers: TeamMember[];
   dailyUsageData: DailyUsageRow[];
-  usageEvents: UsageEvent[];
   window: TimeWindow;
 }): UserWindowMetricRow[] {
   const membersByEmail = new Map(params.teamMembers.map((member) => [member.email, member]));
@@ -224,41 +201,13 @@ export function buildUserWindowMetrics(params: {
       params.window.label,
       member.email,
       member.name || member.email,
-      member.role || "member"
+      member.role || "member",
+      member.isRemoved ?? false
     );
-  }
-
-  for (const event of params.usageEvents) {
-    if (!event.userEmail) {
-      continue;
-    }
-
-    const eventMs = toMs(event.timestamp);
-    if (eventMs < params.window.startDate || eventMs >= params.window.endDate) {
-      continue;
-    }
-
-    const member = membersByEmail.get(event.userEmail);
-    const target = getOrCreate(
-      acc,
-      params.window.id,
-      params.window.label,
-      event.userEmail,
-      member?.name || event.userEmail,
-      member?.role || "member"
-    );
-
-    target.usageEvents += 1;
-    target.requestCostUnits += n(event.requestsCosts);
-
-    const model = event.model || "unknown";
-    const current = target.modelCounts.get(model) || 0;
-    target.modelCounts.set(model, current + 1);
   }
 
   for (const row of params.dailyUsageData) {
-    const email = resolveDailyUserEmail(row);
-    if (!email) {
+    if (!row.email) {
       continue;
     }
 
@@ -266,13 +215,13 @@ export function buildUserWindowMetrics(params: {
       continue;
     }
 
-    const member = membersByEmail.get(email);
+    const member = membersByEmail.get(row.email);
     const target = getOrCreate(
       acc,
       params.window.id,
       params.window.label,
-      email,
-      member?.name || email,
+      row.email,
+      member?.name || row.email,
       member?.role || "member"
     );
 
@@ -282,6 +231,7 @@ export function buildUserWindowMetrics(params: {
     target.agentRequests += n(row.agentRequests);
     target.composerRequests += n(row.composerRequests);
     target.chatRequests += n(row.chatRequests);
+    target.cmdkRequests += n(row.cmdkUsages);
     target.acceptedLinesAdded += n(row.acceptedLinesAdded);
     target.acceptedLinesDeleted += n(row.acceptedLinesDeleted);
 
@@ -297,7 +247,7 @@ export function buildUserWindowMetrics(params: {
 
   return Array.from(acc.values())
     .map((item): UserWindowMetricRow => {
-      const totalAiRequests = item.agentRequests + item.composerRequests + item.chatRequests;
+      const totalAiRequests = item.agentRequests + item.composerRequests + item.chatRequests + item.cmdkRequests;
       const acceptedLines = item.acceptedLinesAdded + item.acceptedLinesDeleted;
 
       return {
@@ -306,11 +256,9 @@ export function buildUserWindowMetrics(params: {
         userEmail: item.userEmail,
         userName: item.userName,
         role: item.role,
+        isRemoved: item.isRemoved,
         favoriteModel: pickFavoriteModel(item.modelCounts),
-        usageEvents: item.usageEvents,
         usageCount: totalAiRequests,
-        requestCostUnits: Number(item.requestCostUnits.toFixed(2)),
-        totalAiRequests,
         productivityScore: Number((acceptedLines / Math.max(totalAiRequests, 1)).toFixed(2)),
         agentEfficiency: Number((item.totalAccepts / Math.max(item.agentRequests, 1)).toFixed(2)),
         tabEfficiency: Number((item.totalTabsAccepted / Math.max(item.totalTabsShown, 1)).toFixed(2)),

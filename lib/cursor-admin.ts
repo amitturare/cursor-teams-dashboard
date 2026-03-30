@@ -7,16 +7,16 @@ const MAX_RETRIES = 4;
 const BASE_RETRY_DELAY_MS = 1200;
 
 export interface TeamMember {
+  id: number | string;
   email: string;
   name?: string;
   role?: string;
+  isRemoved?: boolean;
 }
 
 export interface DailyUsageRow {
   date: number;
   email?: string;
-  userEmail?: string;
-  memberEmail?: string;
   isActive?: boolean;
   totalLinesAdded?: number;
   totalLinesDeleted?: number;
@@ -30,7 +30,8 @@ export interface DailyUsageRow {
   composerRequests?: number;
   chatRequests?: number;
   agentRequests?: number;
-  mostUsedModel?: string;
+  cmdkUsages?: number;
+  mostUsedModel?: string | null;
 }
 
 export interface UsageEvent {
@@ -39,6 +40,7 @@ export interface UsageEvent {
   kind?: string;
   maxMode?: boolean;
   requestsCosts?: number;
+  chargedCents?: number;
   isTokenBasedCall?: boolean;
   tokenUsage?: {
     inputTokens?: number;
@@ -49,15 +51,16 @@ export interface UsageEvent {
   };
   isFreeBugbot?: boolean;
   userEmail?: string;
-  email?: string;
 }
 
 const TeamMembersResponseSchema = z.object({
   teamMembers: z.array(
     z.object({
+      id: z.union([z.number(), z.string()]),
       name: z.string().optional(),
       email: z.string().email(),
-      role: z.string().optional()
+      role: z.string().optional(),
+      isRemoved: z.boolean().optional()
     })
   )
 });
@@ -79,12 +82,21 @@ const DailyUsageResponseSchema = z.object({
       composerRequests: z.number().optional(),
       chatRequests: z.number().optional(),
       agentRequests: z.number().optional(),
-      mostUsedModel: z.string().optional(),
-      email: z.string().email().optional(),
-      userEmail: z.string().email().optional(),
-      memberEmail: z.string().email().optional()
+      cmdkUsages: z.number().optional(),
+      mostUsedModel: z.string().optional().nullable(),
+      email: z.string().email().optional()
     })
-  )
+  ),
+  pagination: z
+    .object({
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+      totalUsers: z.number().optional(),
+      totalPages: z.number().optional(),
+      hasNextPage: z.boolean().optional(),
+      hasPreviousPage: z.boolean().optional()
+    })
+    .optional()
 });
 
 const UsageEventsResponseSchema = z.object({
@@ -104,6 +116,7 @@ const UsageEventsResponseSchema = z.object({
       kind: z.string().optional().nullable(),
       maxMode: z.boolean().optional().nullable(),
       requestsCosts: z.number().optional().nullable(),
+      chargedCents: z.number().optional().nullable(),
       isTokenBasedCall: z.boolean().optional().nullable(),
       tokenUsage: z
         .object({
@@ -115,8 +128,7 @@ const UsageEventsResponseSchema = z.object({
         })
         .optional(),
       isFreeBugbot: z.boolean().optional().nullable(),
-      userEmail: z.string().optional().nullable(),
-      email: z.string().optional().nullable()
+      userEmail: z.string().optional().nullable()
     }).passthrough()
   )
 });
@@ -210,28 +222,41 @@ export async function getDailyUsageData(startDate: number, endDate: number): Pro
   const chunks = splitIntoDateRanges(startDate, endDate, MAX_DAILY_RANGE_DAYS);
   const allRows: DailyUsageRow[] = [];
   const seen = new Set<string>();
+  const pageSize = 200;
 
   for (const chunk of chunks) {
-    const response = await cursorRequest(
-      "/teams/daily-usage-data",
-      {
-        method: "POST",
-        json: {
-          startDate: chunk.startDate,
-          endDate: chunk.endDate
-        }
-      },
-      DailyUsageResponseSchema
-    );
+    let page = 1;
+    let hasNextPage = true;
 
-    for (const row of response.data) {
-      const email = row.email || row.userEmail || row.memberEmail || "unknown";
-      const key = `${email}::${row.date}`;
-      if (seen.has(key)) {
-        continue;
+    while (hasNextPage) {
+      const response = await cursorRequest(
+        "/teams/daily-usage-data",
+        {
+          method: "POST",
+          json: {
+            startDate: chunk.startDate,
+            endDate: chunk.endDate,
+            page,
+            pageSize
+          }
+        },
+        DailyUsageResponseSchema
+      );
+
+      for (const row of response.data) {
+        if (!row.email) continue;
+        const key = `${row.email}::${row.date}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        allRows.push(row);
       }
-      seen.add(key);
-      allRows.push(row);
+
+      hasNextPage = Boolean(response.pagination?.hasNextPage);
+      page += 1;
+
+      if (page > 1000) {
+        throw new Error("Aborting daily usage pagination at 1000 pages per chunk. Narrow date range.");
+      }
     }
   }
 
@@ -272,11 +297,10 @@ export async function getUsageEvents(
         if (event.timestamp === undefined) {
           continue;
         }
-        const eventEmail = event.userEmail || event.email;
-        if (!eventEmail) {
+        if (!event.userEmail) {
           continue;
         }
-        const key = `${eventEmail}::${event.timestamp}::${event.model || "unknown"}::${event.kind || "unknown"}::${event.requestsCosts || 0}`;
+        const key = `${event.userEmail}::${event.timestamp}::${event.model || "unknown"}::${event.kind || "unknown"}::${event.requestsCosts || 0}`;
         if (seen.has(key)) {
           continue;
         }
@@ -284,12 +308,12 @@ export async function getUsageEvents(
         allEvents.push({
           ...event,
           timestamp: event.timestamp,
-          userEmail: eventEmail,
-          email: event.email ?? undefined,
+          userEmail: event.userEmail,
           model: event.model ?? undefined,
           kind: event.kind ?? undefined,
           maxMode: event.maxMode ?? undefined,
           requestsCosts: event.requestsCosts ?? undefined,
+          chargedCents: event.chargedCents ?? undefined,
           isTokenBasedCall: event.isTokenBasedCall ?? undefined,
           isFreeBugbot: event.isFreeBugbot ?? undefined
         });

@@ -942,26 +942,6 @@ tr:last-child td {
   color: var(--muted);
 }
 
-.trend {
-  margin-left: 4px;
-}
-
-.trend-up {
-  color: #1d7a3a;
-}
-
-.trend-down {
-  color: #b12424;
-}
-
-.trend-flat {
-  color: var(--muted);
-}
-
-.trend-new {
-  color: #1f5f99;
-}
-
 @media (max-width: 740px) {
   .appShell {
     flex-direction: column;

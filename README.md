@@ -13,8 +13,8 @@ Team usage dashboard backed by the Cursor Team Admin API.
 
 ## Metric definitions
 
-- Favorite model: most-used model in usage events
-- Usage: total AI requests (`agentRequests + composerRequests + chatRequests`)
+- Favorite model: most-frequent `mostUsedModel` across daily usage rows in the selected window
+- Usage: total AI requests (`agentRequests + composerRequests + chatRequests + cmdkUsages`)
 - Productivity: `(acceptedLinesAdded + acceptedLinesDeleted) / (agentRequests + composerRequests + chatRequests)`
 - Agent efficiency: `totalAccepts / agentRequests`
 - Tab efficiency: `totalTabsAccepted / totalTabsShown`
