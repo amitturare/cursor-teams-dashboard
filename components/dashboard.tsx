@@ -2,6 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UserWindowMetricRow as MetricRow } from "@/lib/metrics";
+import { QuartileBarChart } from "@/components/widgets/QuartileBarChart";
+import { PlaceholderPanel } from "@/components/widgets/PlaceholderPanel";
+import {
+	type WidgetMetric,
+	type WidgetMetricAssignment,
+	getBand,
+	getMetricMax,
+} from "@/components/widgets/quartile-utils";
 
 interface MetricDefinition {
 	name: string;
@@ -34,6 +42,11 @@ interface UserGroup {
 }
 
 type FilterCategory = "all" | "groups" | "individuals";
+
+interface WidgetState {
+  metric: WidgetMetric;
+  selectedBand: 0 | 1 | 2 | 3 | null;
+}
 
 interface UsageEventItem {
 	timestamp: string | number;
@@ -276,6 +289,12 @@ export function Dashboard() {
 	const [bulkEmails, setBulkEmails] = useState("");
 	const [bulkStatus, setBulkStatus] = useState<string | null>(null);
 	const [preferencesReady, setPreferencesReady] = useState(false);
+	const [widgets, setWidgets] = useState<[WidgetState, WidgetState, WidgetState, WidgetState]>([
+		{ metric: "usageCount", selectedBand: null },
+		{ metric: "productivityScore", selectedBand: null },
+		{ metric: "agentEfficiency", selectedBand: null },
+		{ metric: "adoptionRate", selectedBand: null },
+	]);
 	// Feature 2 — Drill-down
 	const [drillDownEmail, setDrillDownEmail] = useState<string | null>(null);
 	const [drillDownEvents, setDrillDownEvents] = useState<UsageEventItem[]>([]);
@@ -348,6 +367,13 @@ export function Dashboard() {
 			cancelled = true;
 		};
 	}, [windowId]);
+
+	// Reset widget band selections when time window or filter changes
+	useEffect(() => {
+		setWidgets((prev) =>
+			prev.map((w) => ({ ...w, selectedBand: null })) as [WidgetState, WidgetState, WidgetState, WidgetState]
+		);
+	}, [windowId, filterCategory, filterGroupNames, filterIndividualEmails]);
 
 	// Feature 2 — load usage events when drillDownEmail or page changes
 	useEffect(() => {
@@ -566,11 +592,26 @@ export function Dashboard() {
 		return rows;
 	}, [rows, filterCategory, filterGroupNames, filterIndividualEmails, groups]);
 
-	const analyticsUserCount = analyticsRows.length;
+	const effectiveRows = useMemo(() => {
+		const activeWidgets = widgets.filter((w) => w.selectedBand !== null);
+		if (activeWidgets.length === 0) return analyticsRows;
+		// Hoist max computation outside the per-row filter loop
+		const maxByMetric = new Map(
+			activeWidgets.map((w) => [w.metric, getMetricMax(analyticsRows, w.metric)])
+		);
+		return analyticsRows.filter((row) =>
+			activeWidgets.every((w) => {
+				const max = maxByMetric.get(w.metric) ?? 0;
+				return getBand(row[w.metric], w.metric, max) === w.selectedBand;
+			})
+		);
+	}, [analyticsRows, widgets]);
+
+	const analyticsUserCount = effectiveRows.length;
 	const isShowingAll = !hasActiveFilter;
 
 	const teamRollup = useMemo(() => {
-		return analyticsRows.reduce(
+		return effectiveRows.reduce(
 			(acc, row) => {
 				acc.usageCount += row.usageCount;
 				acc.productivity += row.productivityScore;
@@ -581,9 +622,9 @@ export function Dashboard() {
 			},
 			{ usageCount: 0, productivity: 0, agentEfficiency: 0, tabEfficiency: 0, adoption: 0 },
 		);
-	}, [analyticsRows]);
+	}, [effectiveRows]);
 
-	const rowCount = Math.max(analyticsRows.length, 1);
+	const rowCount = Math.max(effectiveRows.length, 1);
 	const activeGroup = groups.find((g) => g.id === activeGroupId) ?? null;
 
 	const filteredPopoverUsers = useMemo(() => {
@@ -909,6 +950,65 @@ export function Dashboard() {
 							<div className="panelHeader">
 								<h2>Team Rollup</h2>
 							</div>
+							<div className="widgetSection">
+								<div className="widgetRowFixed">
+									<PlaceholderPanel title="Work Type" />
+									<PlaceholderPanel title="Categories" />
+								</div>
+								<div className="widgetRowChangeable">
+									{widgets.map((w, i) => (
+										<QuartileBarChart
+											key={`widget-${i}`}
+											users={analyticsRows}
+											metric={w.metric}
+											selectedBand={w.selectedBand}
+											widgetMetrics={[
+												widgets[0].metric,
+												widgets[1].metric,
+												widgets[2].metric,
+												widgets[3].metric,
+											] satisfies WidgetMetricAssignment}
+											widgetIndex={i as 0 | 1 | 2 | 3}
+											onMetricChange={(m) =>
+												setWidgets((prev) => {
+													if (prev[i].metric === m) return prev;
+													const next = [...prev] as [
+														WidgetState,
+														WidgetState,
+														WidgetState,
+														WidgetState,
+													];
+													const oldMetric = next[i].metric;
+													const swapIndex = next.findIndex(
+														(row, idx) => idx !== i && row.metric === m
+													);
+													if (swapIndex !== -1) {
+														next[swapIndex] = {
+															...next[swapIndex],
+															metric: oldMetric,
+															selectedBand: null,
+														};
+													}
+													next[i] = { metric: m, selectedBand: null };
+													return next;
+												})
+											}
+											onBandClick={(band) =>
+												setWidgets((prev) => {
+													const next = [...prev] as [WidgetState, WidgetState, WidgetState, WidgetState];
+													next[i] = { ...next[i], selectedBand: band };
+													return next;
+												})
+											}
+										/>
+									))}
+								</div>
+								{effectiveRows.length === 0 && analyticsRows.length > 0 ? (
+									<p className="muted" style={{ fontSize: 12, margin: "8px 0 0", textAlign: "center" }}>
+										No users match the selected widget filters.
+									</p>
+								) : null}
+							</div>
 							<div className="tableWrap">
 								<table>
 									<thead>
@@ -1183,14 +1283,14 @@ export function Dashboard() {
 									</tr>
 								</thead>
 								<tbody>
-									{analyticsRows.length === 0 ? (
+									{effectiveRows.length === 0 ? (
 										<tr>
 											<td colSpan={9} className="muted">
 												No data for the current filter.
 											</td>
 										</tr>
 									) : (
-										analyticsRows.map((row) => (
+										effectiveRows.map((row) => (
 											<tr
 												key={`${row.windowId}-${row.userEmail}`}
 												className={`tableRowClickable${drillDownEmail === row.userEmail ? " tableRowActive" : ""}`}

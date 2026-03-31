@@ -1282,3 +1282,237 @@ tr:last-child td {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* ── Analytics Widgets ── */
+
+.widgetSection {
+  margin: 0 0 14px;
+}
+
+.widgetRowFixed {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.widgetRowChangeable {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.widgetPanel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 12px 14px;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* extends .widgetPanel — requires display:flex + flex-direction:column from that class */
+.widgetPanelPlaceholder {
+  border-style: dashed;
+  background: #fafaf6;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
+  gap: 6px;
+}
+
+.widgetPanelTitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.widgetComingSoon {
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.widgetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 6px;
+}
+
+.widgetMetricPicker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.widgetMetricTrigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  border: 1px solid var(--line);
+  background: #fafaf6;
+  border-radius: 6px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.widgetMetricTrigger:hover {
+  background: #f2f2ec;
+}
+
+.widgetMetricTriggerLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widgetMetricTriggerChevron {
+  flex-shrink: 0;
+  font-size: 7px;
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0.9;
+}
+
+.widgetMetricMenu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.1);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.widgetMetricMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.widgetMetricMenuItem:hover {
+  background: #f0f0ea;
+}
+
+.widgetMetricMenuItemCurrent {
+  background: #e8e8e0;
+  font-weight: 600;
+}
+
+.widgetMetricTick {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.widgetMetricMenuLabel {
+  min-width: 0;
+}
+
+.widgetClearBtn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: color 100ms ease, background 100ms ease;
+}
+
+.widgetClearBtn:hover {
+  color: var(--text);
+  background: #eeeee6;
+}
+
+.widgetChart {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 80px;
+}
+
+.widgetChartSvg {
+  flex: 1;
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+/* SVG <rect role="button"> gets an oversized default focus ring; selection is shown via fill opacity. */
+.widgetChartSvg rect:focus {
+  outline: none;
+}
+
+.widgetChartSvg rect:focus-visible {
+  outline: none;
+  stroke: var(--text);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  paint-order: stroke fill;
+}
+
+.widgetBarLabels {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+}
+
+.widgetBarLabel {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  cursor: pointer;
+  transition: color 100ms ease;
+  user-select: none;
+}
+
+.widgetBarLabel:focus {
+  outline: none;
+}
+
+.widgetBarLabel:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.widgetBarLabelSelected {
+  color: var(--text);
+  font-weight: 600;
+}
