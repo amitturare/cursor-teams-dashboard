@@ -375,6 +375,15 @@ export function Dashboard() {
 		);
 	}, [windowId, filterCategory, filterGroupNames, filterIndividualEmails]);
 
+	// Feature 2 — clear drill-down data when user (or open state) changes so totals never show the previous user
+	useEffect(() => {
+		setDrillDownEvents([]);
+		setDrillDownTotal(0);
+		setDrillDownTotalPages(1);
+		setDrillDownError(null);
+		if (!drillDownEmail) setDrillDownPage(1);
+	}, [drillDownEmail]);
+
 	// Feature 2 — load usage events when drillDownEmail or page changes
 	useEffect(() => {
 		if (!drillDownEmail || !data?.selectedWindow) return;
@@ -1294,7 +1303,14 @@ export function Dashboard() {
 											<tr
 												key={`${row.windowId}-${row.userEmail}`}
 												className={`tableRowClickable${drillDownEmail === row.userEmail ? " tableRowActive" : ""}`}
-												onClick={() => { setDrillDownEmail(row.userEmail); setDrillDownPage(1); }}
+												onClick={() => {
+													setDrillDownEvents([]);
+													setDrillDownTotal(0);
+													setDrillDownTotalPages(1);
+													setDrillDownError(null);
+													setDrillDownEmail(row.userEmail);
+													setDrillDownPage(1);
+												}}
 											>
 												<td>
 													<div className="userCell">
@@ -1653,6 +1669,16 @@ export function Dashboard() {
 								<div>
 									<strong>Usage Events</strong>
 									<p className="muted tiny">{drillDownEmail}</p>
+									{data?.selectedWindow ? (
+										<p className="muted tiny">
+											{data.selectedWindow.label} (
+											{formatDateRange(
+												data.selectedWindow.startDate,
+												data.selectedWindow.endDate
+											)}
+											)
+										</p>
+									) : null}
 								</div>
 								<button
 									type="button"
@@ -1699,28 +1725,32 @@ export function Dashboard() {
 									</table>
 								</div>
 							)}
-							<div className="drillDownFooter">
-								<span className="muted tiny">Total: {drillDownTotal} events</span>
-								<div className="paginationControls">
-									<button
-										type="button"
-										className="plainButton plainButtonSm"
-										disabled={drillDownPage <= 1}
-										onClick={() => setDrillDownPage((p) => p - 1)}
-									>
-										← Prev
-									</button>
-									<span className="muted tiny">Page {drillDownPage} / {drillDownTotalPages}</span>
-									<button
-										type="button"
-										className="plainButton plainButtonSm"
-										disabled={drillDownPage >= drillDownTotalPages}
-										onClick={() => setDrillDownPage((p) => p + 1)}
-									>
-										Next →
-									</button>
+							{!drillDownLoading && !drillDownError ? (
+								<div className="drillDownFooter">
+									<span className="muted tiny">Total: {drillDownTotal} events</span>
+									<div className="paginationControls">
+										<button
+											type="button"
+											className="plainButton plainButtonSm"
+											disabled={drillDownPage <= 1}
+											onClick={() => setDrillDownPage((p) => p - 1)}
+										>
+											← Prev
+										</button>
+										<span className="muted tiny">
+											Page {drillDownPage} / {drillDownTotalPages}
+										</span>
+										<button
+											type="button"
+											className="plainButton plainButtonSm"
+											disabled={drillDownPage >= drillDownTotalPages}
+											onClick={() => setDrillDownPage((p) => p + 1)}
+										>
+											Next →
+										</button>
+									</div>
 								</div>
-							</div>
+							) : null}
 						</aside>
 					</div>
 				) : null}

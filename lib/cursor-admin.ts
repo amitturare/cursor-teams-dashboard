@@ -169,6 +169,20 @@ function getRetryDelayMs(response: Response, attempt: number) {
   return BASE_RETRY_DELAY_MS * 2 ** attempt;
 }
 
+/** Surface Cursor JSON `{ message }` (or plain text) instead of raw dump + path. */
+function formatCursorErrorMessage(status: number, body: string): string {
+  const trimmed = body.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as { message?: string; error?: string };
+    const detail = typeof parsed.message === "string" ? parsed.message : parsed.error;
+    if (typeof detail === "string" && detail.length > 0) return detail;
+  } catch {
+    // not JSON
+  }
+  if (trimmed.length > 0 && trimmed.length <= 280) return trimmed;
+  return `Cursor API returned ${status}. Try again or adjust the request.`;
+}
+
 async function cursorRequest<T>(path: string, options: JsonRequestOptions, schema: z.ZodType<T>): Promise<T> {
   let url = `${getBaseUrl()}${path}`;
 
@@ -202,8 +216,8 @@ async function cursorRequest<T>(path: string, options: JsonRequestOptions, schem
       continue;
     }
 
-    const message = await response.text();
-    throw new Error(`Cursor API ${path} failed (${response.status}): ${message}`);
+    const body = await response.text();
+    throw new Error(formatCursorErrorMessage(response.status, body));
   }
 
   throw new Error(`Cursor API ${path} failed after retries`);
