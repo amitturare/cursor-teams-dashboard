@@ -8,6 +8,12 @@ export interface TimeWindow {
   totalDays: number;
 }
 
+export interface DailyTrendPoint {
+  date: string;
+  usageCount: number;
+  isActive: boolean;
+}
+
 export interface UserWindowMetricRow {
   windowId: string;
   windowLabel: string;
@@ -21,6 +27,7 @@ export interface UserWindowMetricRow {
   agentEfficiency: number;
   tabEfficiency: number;
   adoptionRate: number;
+  dailyTrend: DailyTrendPoint[];
 }
 
 interface Accumulator {
@@ -41,6 +48,7 @@ interface Accumulator {
   chatRequests: number;
   acceptedLinesAdded: number;
   acceptedLinesDeleted: number;
+  dailyData: Map<string, { usageCount: number; isActive: boolean }>;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -119,7 +127,8 @@ function getOrCreate(
     composerRequests: 0,
     chatRequests: 0,
     acceptedLinesAdded: 0,
-    acceptedLinesDeleted: 0
+    acceptedLinesDeleted: 0,
+    dailyData: new Map<string, { usageCount: number; isActive: boolean }>()
   };
 
   map.set(key, next);
@@ -186,6 +195,23 @@ export function resolveWindowSelection(windowId: string | undefined) {
   return windows.find((window) => window.id === windowId) || fallback;
 }
 
+function buildDailyTrend(
+  dailyData: Map<string, { usageCount: number; isActive: boolean }>,
+  startDate: number,
+  endDate: number
+): DailyTrendPoint[] {
+  const points: DailyTrendPoint[] = [];
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  let cursor = startDate;
+  while (cursor < endDate) {
+    const dk = dayKey(cursor);
+    const entry = dailyData.get(dk);
+    points.push({ date: dk, usageCount: entry?.usageCount ?? 0, isActive: entry?.isActive ?? false });
+    cursor += oneDayMs;
+  }
+  return points;
+}
+
 export function buildUserWindowMetrics(params: {
   teamMembers: TeamMember[];
   dailyUsageData: DailyUsageRow[];
@@ -243,6 +269,14 @@ export function buildUserWindowMetrics(params: {
     if (row.isActive) {
       target.activeDays.add(dayKey(row.date));
     }
+
+    const dk = dayKey(row.date);
+    const dayUsage = n(row.agentRequests) + n(row.composerRequests) + n(row.chatRequests) + n(row.cmdkUsages);
+    const prevDay = target.dailyData.get(dk);
+    target.dailyData.set(dk, {
+      usageCount: (prevDay?.usageCount ?? 0) + dayUsage,
+      isActive: (prevDay?.isActive ?? false) || Boolean(row.isActive)
+    });
   }
 
   return Array.from(acc.values())
@@ -262,7 +296,8 @@ export function buildUserWindowMetrics(params: {
         productivityScore: Number((acceptedLines / Math.max(totalAiRequests, 1)).toFixed(2)),
         agentEfficiency: Number((item.totalAccepts / Math.max(item.agentRequests, 1)).toFixed(2)),
         tabEfficiency: Number((item.totalTabsAccepted / Math.max(item.totalTabsShown, 1)).toFixed(2)),
-        adoptionRate: Number((item.activeDays.size / Math.max(params.window.totalDays, 1)).toFixed(2))
+        adoptionRate: Number((item.activeDays.size / Math.max(params.window.totalDays, 1)).toFixed(2)),
+        dailyTrend: buildDailyTrend(item.dailyData, params.window.startDate, params.window.endDate)
       };
     })
     .sort((a, b) => a.userEmail.localeCompare(b.userEmail));

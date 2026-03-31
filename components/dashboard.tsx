@@ -3,10 +3,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UserWindowMetricRow as MetricRow } from "@/lib/metrics";
 
+interface MetricDefinition {
+	name: string;
+	tagline: string;
+	formula: string;
+	source: string;
+	interpret: string;
+}
+
 interface ApiResponse {
 	generatedAt: string;
 	rows: MetricRow[];
-	definitions: Record<string, string>;
+	definitions: MetricDefinition[];
 	cached?: boolean;
 	selectedWindow: { id: string; label: string; startDate: number; endDate: number };
 	availableWindows: Array<{ id: string; label: string }>;
@@ -26,6 +34,45 @@ interface UserGroup {
 }
 
 type FilterCategory = "all" | "groups" | "individuals";
+
+interface UsageEventItem {
+	timestamp: string | number;
+	model?: string;
+	kind?: string;
+	maxMode?: boolean;
+	chargedCents?: number;
+	isFreeBugbot?: boolean;
+	userEmail?: string;
+}
+
+interface UsageEventsResponse {
+	events: UsageEventItem[];
+	total: number;
+	page: number;
+	pageSize: number;
+	totalPages: number;
+}
+
+interface AuditLogEntry {
+	timestamp?: string;
+	userEmail?: string;
+	eventType?: string;
+	details?: Record<string, unknown>;
+}
+
+interface AuditLogsResponse {
+	logs: AuditLogEntry[];
+	total: number;
+	page: number;
+	pageSize: number;
+	totalPages: number;
+}
+
+interface RepoBlocklistEntry {
+	id: string;
+	url: string;
+	patterns: string[];
+}
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const responseCache = new Map<string, { data: ApiResponse; fetchedAt: number }>();
@@ -77,6 +124,54 @@ async function loadMetrics(windowId: string): Promise<ApiResponse> {
 		});
 	inflightRequests.set(windowId, request);
 	return request;
+}
+
+async function loadUsageEvents(
+	email: string,
+	startDate: number,
+	endDate: number,
+	page: number
+): Promise<UsageEventsResponse> {
+	const params = new URLSearchParams({
+		email,
+		startDate: String(startDate),
+		endDate: String(endDate),
+		page: String(page),
+		pageSize: "50"
+	});
+	const response = await fetch(`/api/usage-events?${params}`, { cache: "no-store" });
+	if (!response.ok) {
+		const body = (await response.json()) as { error?: string };
+		throw new Error(body.error || `Request failed with ${response.status}`);
+	}
+	return response.json() as Promise<UsageEventsResponse>;
+}
+
+async function loadAuditLogs(
+	windowId: string,
+	search: string,
+	eventTypes: string,
+	page: number
+): Promise<AuditLogsResponse> {
+	const params = new URLSearchParams({ window: windowId, page: String(page) });
+	if (search) params.set("search", search);
+	if (eventTypes) params.set("eventTypes", eventTypes);
+	const response = await fetch(`/api/audit-logs?${params}`, { cache: "no-store" });
+	if (!response.ok) {
+		const body = (await response.json()) as { error?: string };
+		throw new Error(body.error || `Request failed with ${response.status}`);
+	}
+	return response.json() as Promise<AuditLogsResponse>;
+}
+
+async function fetchRepoBlocklistsApi(): Promise<RepoBlocklistEntry[]> {
+	const response = await fetch("/api/repo-blocklists", { cache: "no-store" });
+	if (!response.ok) {
+		const body = (await response.json()) as { error?: string };
+		throw new Error(body.error || `Request failed with ${response.status}`);
+	}
+	const body = (await response.json()) as { repos: RepoBlocklistEntry[] };
+	return body.repos;
 }
 
 function nameFromEmail(email: string): string {
@@ -148,9 +243,26 @@ function addUsersToGroup(groups: UserGroup[], emails: string[], targetGroupId: s
 	});
 }
 
+function Sparkline({ points, width = 80, height = 24 }: { points: MetricRow["dailyTrend"]; width?: number; height?: number }) {
+	if (points.length < 2) return <span className="muted tiny">—</span>;
+	const maxCount = Math.max(...points.map((p) => p.usageCount), 1);
+	const step = width / (points.length - 1);
+	const pathPoints = points.map((p, i) => {
+		const x = i * step;
+		const y = height - (p.usageCount / maxCount) * (height - 2) - 1;
+		return `${x.toFixed(1)},${y.toFixed(1)}`;
+	});
+	return (
+		<svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true" className="sparkline">
+			<polyline points={pathPoints.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+
 export function Dashboard() {
 	const [windowId, setWindowId] = useState("past-7d");
-	const [activeTab, setActiveTab] = useState<"analytics" | "users" | "definitions">("analytics");
+	const [activeTab, setActiveTab] = useState<"analytics" | "users" | "definitions" | "audit" | "security">("analytics");
 	const [filterCategory, setFilterCategory] = useState<FilterCategory>("all");
 	const [filterGroupNames, setFilterGroupNames] = useState<string[]>([]);
 	const [filterIndividualEmails, setFilterIndividualEmails] = useState<string[]>([]);
@@ -164,6 +276,32 @@ export function Dashboard() {
 	const [bulkEmails, setBulkEmails] = useState("");
 	const [bulkStatus, setBulkStatus] = useState<string | null>(null);
 	const [preferencesReady, setPreferencesReady] = useState(false);
+	// Feature 2 — Drill-down
+	const [drillDownEmail, setDrillDownEmail] = useState<string | null>(null);
+	const [drillDownEvents, setDrillDownEvents] = useState<UsageEventItem[]>([]);
+	const [drillDownLoading, setDrillDownLoading] = useState(false);
+	const [drillDownError, setDrillDownError] = useState<string | null>(null);
+	const [drillDownPage, setDrillDownPage] = useState(1);
+	const [drillDownTotal, setDrillDownTotal] = useState(0);
+	const [drillDownTotalPages, setDrillDownTotalPages] = useState(1);
+	// Feature 4 — Audit Log
+	const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+	const [auditLoading, setAuditLoading] = useState(false);
+	const [auditError, setAuditError] = useState<string | null>(null);
+	const [auditSearchInput, setAuditSearchInput] = useState("");
+	const [auditSearch, setAuditSearch] = useState("");
+	const [auditEventTypes, setAuditEventTypes] = useState("");
+	const [auditPage, setAuditPage] = useState(1);
+	const [auditTotal, setAuditTotal] = useState(0);
+	const [auditTotalPages, setAuditTotalPages] = useState(1);
+	// Feature 5 — Repo Blocklist
+	const [repoBlocklists, setRepoBlocklists] = useState<RepoBlocklistEntry[]>([]);
+	const [securityLoading, setSecurityLoading] = useState(false);
+	const [securityError, setSecurityError] = useState<string | null>(null);
+	const [newRepoUrl, setNewRepoUrl] = useState("");
+	const [newRepoPatterns, setNewRepoPatterns] = useState("");
+	const [securityMutating, setSecurityMutating] = useState(false);
+	const [securityMutateError, setSecurityMutateError] = useState<string | null>(null);
 	const filterRef = useRef<HTMLDivElement>(null);
 	const filterSearchRef = useRef<HTMLInputElement>(null);
 
@@ -211,8 +349,100 @@ export function Dashboard() {
 		};
 	}, [windowId]);
 
+	// Feature 2 — load usage events when drillDownEmail or page changes
+	useEffect(() => {
+		if (!drillDownEmail || !data?.selectedWindow) return;
+		let cancelled = false;
+		async function loadEvents() {
+			setDrillDownLoading(true);
+			setDrillDownError(null);
+			try {
+				const result = await loadUsageEvents(
+					drillDownEmail!,
+					data!.selectedWindow.startDate,
+					data!.selectedWindow.endDate,
+					drillDownPage
+				);
+				if (!cancelled) {
+					setDrillDownEvents(result.events);
+					setDrillDownTotal(result.total);
+					setDrillDownTotalPages(result.totalPages);
+				}
+			} catch (err) {
+				if (!cancelled) setDrillDownError(err instanceof Error ? err.message : "Failed to load events");
+			} finally {
+				if (!cancelled) setDrillDownLoading(false);
+			}
+		}
+		loadEvents();
+		return () => { cancelled = true; };
+	}, [drillDownEmail, drillDownPage, data?.selectedWindow]);
+
+	// Feature 2 — close drill-down on Escape
+	useEffect(() => {
+		if (!drillDownEmail) return;
+		function handleKeyDown(e: KeyboardEvent) {
+			if (e.key === "Escape") setDrillDownEmail(null);
+		}
+		document.addEventListener("keydown", handleKeyDown);
+		return () => document.removeEventListener("keydown", handleKeyDown);
+	}, [drillDownEmail]);
+
+	// Feature 4 — debounce audit search input
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			setAuditSearch(auditSearchInput);
+			setAuditPage(1);
+		}, 400);
+		return () => clearTimeout(timer);
+	}, [auditSearchInput]);
+
+	// Feature 4 — load audit logs when tab/window/search/page changes
+	useEffect(() => {
+		if (activeTab !== "audit") return;
+		let cancelled = false;
+		async function loadLogs() {
+			setAuditLoading(true);
+			setAuditError(null);
+			try {
+				const result = await loadAuditLogs(windowId, auditSearch, auditEventTypes, auditPage);
+				if (!cancelled) {
+					setAuditLogs(result.logs);
+					setAuditTotal(result.total);
+					setAuditTotalPages(result.totalPages);
+				}
+			} catch (err) {
+				if (!cancelled) setAuditError(err instanceof Error ? err.message : "Failed to load audit logs");
+			} finally {
+				if (!cancelled) setAuditLoading(false);
+			}
+		}
+		loadLogs();
+		return () => { cancelled = true; };
+	}, [activeTab, windowId, auditSearch, auditEventTypes, auditPage]);
+
+	// Feature 5 — load repo blocklists when security tab opens
+	useEffect(() => {
+		if (activeTab !== "security") return;
+		let cancelled = false;
+		async function loadBlocklists() {
+			setSecurityLoading(true);
+			setSecurityError(null);
+			try {
+				const repos = await fetchRepoBlocklistsApi();
+				if (!cancelled) setRepoBlocklists(repos);
+			} catch (err) {
+				if (!cancelled) setSecurityError(err instanceof Error ? err.message : "Failed to load blocklists");
+			} finally {
+				if (!cancelled) setSecurityLoading(false);
+			}
+		}
+		loadBlocklists();
+		return () => { cancelled = true; };
+	}, [activeTab]);
+
 	const rows = useMemo(() => data?.rows ?? [], [data]);
-	const definitions = useMemo(() => data?.definitions ?? {}, [data]);
+	const definitions = useMemo(() => data?.definitions ?? [], [data]);
 	const windows = useMemo(() => data?.availableWindows ?? [], [data]);
 	const windowLabelMap = useMemo(
 		() =>
@@ -493,6 +723,54 @@ export function Dashboard() {
 	const isGroupsPanelDimmed = filterCategory === "individuals" && filterIndividualEmails.length > 0;
 	const isIndividualsPanelDimmed = filterCategory === "groups" && filterGroupNames.length > 0;
 
+	// Feature 5 — repo blocklist mutations
+	async function addRepo() {
+		if (!newRepoUrl.trim()) return;
+		setSecurityMutating(true);
+		setSecurityMutateError(null);
+		try {
+			const patterns = newRepoPatterns
+				.split(",")
+				.map((s) => s.trim())
+				.filter(Boolean);
+			const response = await fetch("/api/repo-blocklists", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ url: newRepoUrl.trim(), patterns })
+			});
+			if (!response.ok) {
+				const body = (await response.json()) as { error?: string };
+				throw new Error(body.error || "Failed to add repo");
+			}
+			setNewRepoUrl("");
+			setNewRepoPatterns("");
+			const repos = await fetchRepoBlocklistsApi();
+			setRepoBlocklists(repos);
+		} catch (err) {
+			setSecurityMutateError(err instanceof Error ? err.message : "Failed to add repo");
+		} finally {
+			setSecurityMutating(false);
+		}
+	}
+
+	async function deleteRepo(repoId: string) {
+		setSecurityMutating(true);
+		setSecurityMutateError(null);
+		try {
+			const response = await fetch(`/api/repo-blocklists/${encodeURIComponent(repoId)}`, { method: "DELETE" });
+			if (!response.ok) {
+				const body = (await response.json()) as { error?: string };
+				throw new Error(body.error || "Failed to delete repo");
+			}
+			const repos = await fetchRepoBlocklistsApi();
+			setRepoBlocklists(repos);
+		} catch (err) {
+			setSecurityMutateError(err instanceof Error ? err.message : "Failed to delete repo");
+		} finally {
+			setSecurityMutating(false);
+		}
+	}
+
 	return (
 		<div className="appShell">
 			<nav className="sidebar" aria-label="Main navigation">
@@ -543,6 +821,17 @@ export function Dashboard() {
 					</button>
 					<button
 						type="button"
+						className={activeTab === "security" ? "sidebarBtn sidebarBtnActive" : "sidebarBtn"}
+						onClick={() => setActiveTab("security")}
+						aria-label="Security"
+						title="Security"
+					>
+						<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+							<path d="M10 2L4 5v5c0 4 2.7 7.4 6 8.5 3.3-1.1 6-4.5 6-8.5V5L10 2z" />
+						</svg>
+					</button>
+					<button
+						type="button"
 						className={activeTab === "definitions" ? "sidebarBtn sidebarBtnActive" : "sidebarBtn"}
 						onClick={() => setActiveTab("definitions")}
 						aria-label="Metric Definitions"
@@ -567,35 +856,12 @@ export function Dashboard() {
 			</nav>
 
 			<main className="mainContent">
+			<div className="pageInner">
 				<section className="topbar">
 					<div>
 						<h1>AI SparkLine</h1>
-						<p className="meta inlineMeta">
-							{activeTab === "users" ? (
-								<>
-									Total Users: {users.length}
-									{data?.cached ? <span className="muted tiny"> (cached)</span> : null}
-								</>
-							) : (
-								<>
-									{data?.selectedWindow ? (
-										<>
-											{data.selectedWindow.label}{" "}
-											<span className="muted">
-												({formatDateRange(data.selectedWindow.startDate, data.selectedWindow.endDate)})
-											</span>
-										</>
-									) : (
-										"–"
-									)}{" "}
-									| Total Users: {users.length}
-									{activeTab === "analytics" && !isShowingAll ? <> | In View: {analyticsUserCount}</> : null}
-									{data?.cached ? <span className="muted tiny"> (cached)</span> : null}
-								</>
-							)}
-						</p>
 					</div>
-					{activeTab !== "users" ? (
+					{activeTab === "analytics" ? (
 						<div className="controls">
 							<div className="windowPicker" role="group" aria-label="Time window">
 								{(presetWindows.length > 0
@@ -846,6 +1112,9 @@ export function Dashboard() {
 								</div>
 							</div>
 							<span className="muted tiny">
+								{data?.selectedWindow ? (
+									<>{data.selectedWindow.label} ({formatDateRange(data.selectedWindow.startDate, data.selectedWindow.endDate)}) · </>
+								) : null}
 								{analyticsUserCount} users in view
 								{data?.generatedAt ? (
 									<>
@@ -910,18 +1179,23 @@ export function Dashboard() {
 										<th>Agent Eff.</th>
 										<th>Tab Eff.</th>
 										<th>Adoption</th>
+										<th>Trend</th>
 									</tr>
 								</thead>
 								<tbody>
 									{analyticsRows.length === 0 ? (
 										<tr>
-											<td colSpan={8} className="muted">
+											<td colSpan={9} className="muted">
 												No data for the current filter.
 											</td>
 										</tr>
 									) : (
 										analyticsRows.map((row) => (
-											<tr key={`${row.windowId}-${row.userEmail}`}>
+											<tr
+												key={`${row.windowId}-${row.userEmail}`}
+												className={`tableRowClickable${drillDownEmail === row.userEmail ? " tableRowActive" : ""}`}
+												onClick={() => { setDrillDownEmail(row.userEmail); setDrillDownPage(1); }}
+											>
 												<td>
 													<div className="userCell">
 														<span>{resolveUserName(row.userName, row.userEmail)}</span>
@@ -935,6 +1209,7 @@ export function Dashboard() {
 												<td>{pct(row.agentEfficiency)}</td>
 												<td>{pct(row.tabEfficiency)}</td>
 												<td>{pct(row.adoptionRate)}</td>
+												<td><Sparkline points={row.dailyTrend} /></td>
 											</tr>
 										))
 									)}
@@ -1071,18 +1346,285 @@ export function Dashboard() {
 
 				{!loading && !error && activeTab === "definitions" ? (
 					<section className="defsPage">
-						<h2>Metric Definitions</h2>
-						<p className="muted">How each metric on the Analytics dashboard is calculated.</p>
+						<div className="defsPageHeader">
+							<h2>Metric Definitions</h2>
+							<p className="muted">What each number on the Analytics tab means, where it comes from, and how to read it.</p>
+						</div>
 						<div className="defsGrid">
-							{Object.entries(definitions).map(([key, value]) => (
-								<div key={key} className="defCard">
-									<h3 className="defCardTitle">{key}</h3>
-									<p className="defCardBody">{value}</p>
+							{definitions.map((def, i) => (
+								<div key={def.name} className="defCard">
+									<div className="defCardLeft">
+										<span className="defCardNum">0{i + 1}</span>
+										<h3 className="defCardTitle">{def.name}</h3>
+										<p className="defCardTagline">{def.tagline}</p>
+									</div>
+									<div className="defCardRight">
+										<div className="defCardRow">
+											<span className="defCardLabel">Formula</span>
+											<span className="defCardFormula">{def.formula}</span>
+										</div>
+										<div className="defCardRow">
+											<span className="defCardLabel">Source</span>
+											<span className="defCardValue">{def.source}</span>
+										</div>
+										<div className="defCardRow">
+											<span className="defCardLabel">How to read</span>
+											<span className="defCardValue">{def.interpret}</span>
+										</div>
+									</div>
 								</div>
 							))}
 						</div>
 					</section>
 				) : null}
+
+				{activeTab === "audit" ? (
+					<section className="panel">
+						<div className="panelHeader">
+							<h2>Audit Log</h2>
+						</div>
+						<div className="auditPage">
+							<div className="auditControls">
+								<input
+									className="auditSearchInput"
+									type="text"
+									placeholder="Search by user or event…"
+									value={auditSearchInput}
+									onChange={(e) => { setAuditSearchInput(e.target.value); setAuditPage(1); }}
+								/>
+								<input
+									className="auditSearchInput"
+									type="text"
+									placeholder="Event types (comma-separated)"
+									value={auditEventTypes}
+									onChange={(e) => { setAuditEventTypes(e.target.value); setAuditPage(1); }}
+								/>
+							</div>
+							{auditLoading ? (
+								<p className="muted">Loading audit logs…</p>
+							) : auditError ? (
+								<p className="error">{auditError}</p>
+							) : (
+								<>
+									<div className="tableWrap">
+										<table>
+											<thead>
+												<tr>
+													<th>Timestamp</th>
+													<th>User</th>
+													<th>Event Type</th>
+													<th>Details</th>
+												</tr>
+											</thead>
+											<tbody>
+												{auditLogs.length === 0 ? (
+													<tr>
+														<td colSpan={4} className="muted">No audit events found.</td>
+													</tr>
+												) : (
+													auditLogs.map((entry, i) => (
+														<tr key={i}>
+															<td>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "—"}</td>
+															<td>{entry.userEmail || "—"}</td>
+															<td>{entry.eventType || "—"}</td>
+															<td className="auditDetails">{entry.details ? JSON.stringify(entry.details).slice(0, 80) : "—"}</td>
+														</tr>
+													))
+												)}
+											</tbody>
+										</table>
+									</div>
+									<div className="auditFooter">
+										<span className="muted tiny">Total: {auditTotal} events</span>
+										<div className="paginationControls">
+											<button
+												type="button"
+												className="plainButton plainButtonSm"
+												disabled={auditPage <= 1}
+												onClick={() => setAuditPage((p) => p - 1)}
+											>
+												← Prev
+											</button>
+											<span className="muted tiny">Page {auditPage} / {auditTotalPages}</span>
+											<button
+												type="button"
+												className="plainButton plainButtonSm"
+												disabled={auditPage >= auditTotalPages}
+												onClick={() => setAuditPage((p) => p + 1)}
+											>
+												Next →
+											</button>
+										</div>
+									</div>
+								</>
+							)}
+						</div>
+					</section>
+				) : null}
+
+				{activeTab === "security" ? (
+					<section className="panel">
+						<div className="panelHeader">
+							<h2>Repo Blocklist</h2>
+						</div>
+						<div className="securityPage">
+							<p className="muted">Repositories blocked from Cursor AI features. Add a URL and optional file-path patterns.</p>
+							{securityMutateError ? <p className="error">{securityMutateError}</p> : null}
+							<div className="securityAddRow">
+								<input
+									className="auditSearchInput"
+									type="text"
+									placeholder="Repository URL (e.g. github.com/org/repo)"
+									value={newRepoUrl}
+									onChange={(e) => setNewRepoUrl(e.target.value)}
+								/>
+								<input
+									className="auditSearchInput"
+									type="text"
+									placeholder="Patterns, comma-separated (optional)"
+									value={newRepoPatterns}
+									onChange={(e) => setNewRepoPatterns(e.target.value)}
+								/>
+								<button
+									type="button"
+									className="plainButton plainButtonSm"
+									disabled={securityMutating || !newRepoUrl.trim()}
+									onClick={addRepo}
+								>
+									{securityMutating ? "Adding…" : "Add"}
+								</button>
+							</div>
+							{securityLoading ? (
+								<p className="muted">Loading…</p>
+							) : securityError ? (
+								<p className="error">{securityError}</p>
+							) : (
+								<div className="tableWrap">
+									<table>
+										<thead>
+											<tr>
+												<th>Repository URL</th>
+												<th>Patterns</th>
+												<th></th>
+											</tr>
+										</thead>
+										<tbody>
+											{repoBlocklists.length === 0 ? (
+												<tr>
+													<td colSpan={3} className="muted">No repos blocked.</td>
+												</tr>
+											) : (
+												repoBlocklists.map((repo) => (
+													<tr key={repo.id}>
+														<td>{repo.url}</td>
+														<td>
+															<span className="patternsList">
+																{repo.patterns.length > 0 ? repo.patterns.join(", ") : <span className="muted">—</span>}
+															</span>
+														</td>
+														<td>
+															<button
+																type="button"
+																className="plainButton plainButtonSm deleteButton"
+																disabled={securityMutating}
+																onClick={() => deleteRepo(repo.id)}
+															>
+																Delete
+															</button>
+														</td>
+													</tr>
+												))
+											)}
+										</tbody>
+									</table>
+								</div>
+							)}
+						</div>
+					</section>
+				) : null}
+
+				{drillDownEmail !== null ? (
+					<div
+						className="drillDownOverlay"
+						onClick={() => setDrillDownEmail(null)}
+					>
+						<aside className="drillDownPanel" onClick={(e) => e.stopPropagation()}>
+							<div className="drillDownHeader">
+								<div>
+									<strong>Usage Events</strong>
+									<p className="muted tiny">{drillDownEmail}</p>
+								</div>
+								<button
+									type="button"
+									className="plainButton plainButtonSm drillDownClose"
+									aria-label="Close"
+									onClick={() => setDrillDownEmail(null)}
+								>
+									×
+								</button>
+							</div>
+							{drillDownLoading ? (
+								<p className="muted" style={{ padding: "16px" }}>Loading…</p>
+							) : drillDownError ? (
+								<p className="error" style={{ padding: "16px" }}>{drillDownError}</p>
+							) : (
+								<div className="tableWrap" style={{ flex: 1 }}>
+									<table>
+										<thead>
+											<tr>
+												<th>Timestamp</th>
+												<th>Model</th>
+												<th>Kind</th>
+												<th>Max Mode</th>
+												<th>Charged (¢)</th>
+											</tr>
+										</thead>
+										<tbody>
+											{drillDownEvents.length === 0 ? (
+												<tr>
+													<td colSpan={5} className="muted">No events found.</td>
+												</tr>
+											) : (
+												drillDownEvents.map((evt, i) => (
+													<tr key={i}>
+														<td>{evt.timestamp ? new Date(Number(evt.timestamp)).toLocaleString() : "—"}</td>
+														<td>{evt.model || "—"}</td>
+														<td>{evt.kind || "—"}</td>
+														<td>{evt.maxMode ? "Yes" : "No"}</td>
+														<td>{evt.chargedCents ?? "—"}</td>
+													</tr>
+												))
+											)}
+										</tbody>
+									</table>
+								</div>
+							)}
+							<div className="drillDownFooter">
+								<span className="muted tiny">Total: {drillDownTotal} events</span>
+								<div className="paginationControls">
+									<button
+										type="button"
+										className="plainButton plainButtonSm"
+										disabled={drillDownPage <= 1}
+										onClick={() => setDrillDownPage((p) => p - 1)}
+									>
+										← Prev
+									</button>
+									<span className="muted tiny">Page {drillDownPage} / {drillDownTotalPages}</span>
+									<button
+										type="button"
+										className="plainButton plainButtonSm"
+										disabled={drillDownPage >= drillDownTotalPages}
+										onClick={() => setDrillDownPage((p) => p + 1)}
+									>
+										Next →
+									</button>
+								</div>
+							</div>
+						</aside>
+					</div>
+				) : null}
+			</div>
 			</main>
 		</div>
 	);

@@ -13,9 +13,17 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 
 type MetricRows = ReturnType<typeof buildUserWindowMetrics>;
 
+type MetricDefinition = {
+  name: string;
+  tagline: string;
+  formula: string;
+  source: string;
+  interpret: string;
+};
+
 type CachedMetricsResponse = {
   generatedAt: string;
-  definitions: Record<string, string>;
+  definitions: MetricDefinition[];
   rows: MetricRows;
   availableWindows: Array<{ id: string; label: string }>;
   selectedWindow: { id: string; label: string; startDate: number; endDate: number };
@@ -48,20 +56,50 @@ export async function GET(request: NextRequest) {
 
     const payload: CachedMetricsResponse = {
       generatedAt: new Date().toISOString(),
-      definitions: {
-        favoriteModel:
-          "Based on Cursor daily usage data field `mostUsedModel` (documented in `/teams/daily-usage-data`). This dashboard picks the model that appears most often across the user's daily rows in the selected window.",
-        usage:
-          "Sum of documented daily usage fields `agentRequests + composerRequests + chatRequests + cmdkUsages` from `/teams/daily-usage-data`, aggregated across the selected window.",
-        productivity:
-          "Derived from documented daily usage fields: `(acceptedLinesAdded + acceptedLinesDeleted) / (agentRequests + composerRequests + chatRequests)`, aggregated across the selected window.",
-        agentEfficiency:
-          "Derived from documented daily usage fields: `totalAccepts / agentRequests`, using sums across the selected window.",
-        tabEfficiency:
-          "Derived from documented daily usage fields: `totalTabsAccepted / totalTabsShown`, using sums across the selected window.",
-        adoption:
-          "Based on documented daily usage field `isActive`. Adoption is `active days / total days in the selected window`."
-      },
+      definitions: [
+        {
+          name: "Favorite Model",
+          tagline: "The AI model this user relied on most during the selected period",
+          formula: "Most frequently appearing model across all daily rows in the window",
+          source: "mostUsedModel field from the Cursor /teams/daily-usage-data API, recorded per user per day",
+          interpret: "'default' means Cursor auto-selected the model. Named models (e.g. claude-4-sonnet-thinking, gpt-4o) mean the user explicitly switched. A user always showing 'default' is letting Cursor decide; a named model indicates intentional preference."
+        },
+        {
+          name: "Usage",
+          tagline: "Total number of AI interactions made during the selected window",
+          formula: "agentRequests + composerRequests + chatRequests + cmdkUsages, summed across all days",
+          source: "Four daily counters from /teams/daily-usage-data: Agent (multi-step tasks), Composer (inline generation), Chat (messages), Cmd+K (quick completions)",
+          interpret: "The clearest signal of AI engagement. Higher = more interactions. Does not measure code quality or acceptance — just how much the user reached for AI assistance."
+        },
+        {
+          name: "Productivity Score",
+          tagline: "Lines of AI-suggested code accepted per request — did the AI save real work?",
+          formula: "(acceptedLinesAdded + acceptedLinesDeleted) ÷ (agentRequests + composerRequests + chatRequests)",
+          source: "acceptedLinesAdded, acceptedLinesDeleted, and request counts from /teams/daily-usage-data",
+          interpret: "A score of 34 means ~34 lines of AI output were kept per request on average. 0 means requests were made but nothing was accepted. Scores above 50 are strong; very high scores (100+) often come from Agent mode scaffolding large files."
+        },
+        {
+          name: "Agent Efficiency",
+          tagline: "How often the user kept the Agent's output — a signal of agent trust and quality",
+          formula: "totalAccepts ÷ agentRequests × 100",
+          source: "totalAccepts and agentRequests fields from /teams/daily-usage-data",
+          interpret: "67% means the agent's result was accepted 2 out of 3 times. Under 30% often means exploratory use or the agent isn't aligned to the codebase style. High efficiency (70%+) suggests the user and agent work well together."
+        },
+        {
+          name: "Tab Efficiency",
+          tagline: "How often Tab (autocomplete) suggestions were accepted when shown",
+          formula: "totalTabsAccepted ÷ totalTabsShown × 100",
+          source: "totalTabsAccepted and totalTabsShown fields from /teams/daily-usage-data",
+          interpret: "Autocomplete fires on every keypress, so rates are naturally lower than Agent efficiency. 10–15% is typical; above 25% is excellent. Very low rates (<5%) may mean the user dismisses suggestions habitually or the model isn't well-calibrated to their style."
+        },
+        {
+          name: "Adoption Rate",
+          tagline: "How consistently the user engaged with Cursor AI across the window — daily habit vs. occasional use",
+          formula: "Days where isActive = true ÷ total days in window × 100",
+          source: "isActive boolean field from /teams/daily-usage-data — true when the user made at least one AI request that day",
+          interpret: "100% means AI was used every single day. 43% on a 7-day window means 3 active days. A user can have high Usage but low Adoption (heavy use on select days) — the Trend sparkline in the table shows the day-by-day pattern."
+        }
+      ],
       rows,
       availableWindows: getSelectableWindows().map((window) => ({ id: window.id, label: window.label })),
       selectedWindow: { id: selectedWindow.id, label: selectedWindow.label, startDate: selectedWindow.startDate, endDate: selectedWindow.endDate }

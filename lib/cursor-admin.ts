@@ -153,6 +153,7 @@ function buildAuthHeader() {
 
 type JsonRequestOptions = Omit<RequestInit, "headers" | "body"> & {
   json?: unknown;
+  searchParams?: Record<string, string | number | undefined>;
 };
 
 function sleep(ms: number) {
@@ -169,7 +170,16 @@ function getRetryDelayMs(response: Response, attempt: number) {
 }
 
 async function cursorRequest<T>(path: string, options: JsonRequestOptions, schema: z.ZodType<T>): Promise<T> {
-  const url = `${getBaseUrl()}${path}`;
+  let url = `${getBaseUrl()}${path}`;
+
+  if (options.searchParams) {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(options.searchParams)) {
+      if (v !== undefined) params.set(k, String(v));
+    }
+    const qs = params.toString();
+    if (qs) url += `?${qs}`;
+  }
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
     const response = await fetch(url, {
@@ -263,6 +273,68 @@ export async function getDailyUsageData(startDate: number, endDate: number): Pro
   return allRows;
 }
 
+export interface AuditLogEntry {
+  timestamp?: string;
+  userEmail?: string;
+  eventType?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface RepoBlocklistEntry {
+  id: string;
+  url: string;
+  patterns: string[];
+}
+
+const AuditLogsResponseSchema = z.object({
+  events: z
+    .array(
+      z
+        .object({
+          timestamp: z.string().optional(),
+          userEmail: z.string().optional(),
+          eventType: z.string().optional(),
+          details: z.record(z.string(), z.unknown()).optional()
+        })
+        .passthrough()
+    )
+    .optional(),
+  auditLogs: z
+    .array(
+      z
+        .object({
+          timestamp: z.string().optional(),
+          userEmail: z.string().optional(),
+          eventType: z.string().optional(),
+          details: z.record(z.string(), z.unknown()).optional()
+        })
+        .passthrough()
+    )
+    .optional(),
+  pagination: z
+    .object({
+      hasNextPage: z.boolean().optional(),
+      currentPage: z.number().optional(),
+      numPages: z.number().optional()
+    })
+    .optional()
+});
+
+const RepoBlocklistsResponseSchema = z.object({
+  repos: z.array(
+    z
+      .object({
+        id: z.string(),
+        url: z.string(),
+        patterns: z.array(z.string())
+      })
+      .passthrough()
+  )
+});
+
+const UpsertRepoBlocklistResponseSchema = z.object({}).passthrough();
+const DeleteResponseSchema = z.object({}).passthrough();
+
 export async function getUsageEvents(
   startDate: number,
   endDate: number,
@@ -329,4 +401,91 @@ export async function getUsageEvents(
   }
 
   return allEvents;
+}
+
+export async function getAuditLogs(
+  startDate: number,
+  endDate: number,
+  options?: { search?: string; eventTypes?: string[]; users?: string[] }
+): Promise<AuditLogEntry[]> {
+  const ranges = splitIntoDateRanges(startDate, endDate, MAX_DAILY_RANGE_DAYS);
+  const pageSize = 200;
+  const allLogs: AuditLogEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const range of ranges) {
+    let page = 1;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const response = await cursorRequest(
+        "/teams/audit-logs",
+        {
+          method: "GET",
+          searchParams: {
+            startTime: range.startDate,
+            endTime: range.endDate,
+            page,
+            pageSize,
+            ...(options?.search ? { search: options.search } : {}),
+            ...(options?.eventTypes?.length ? { eventTypes: options.eventTypes.join(",") } : {}),
+            ...(options?.users?.length ? { users: options.users.join(",") } : {})
+          }
+        },
+        AuditLogsResponseSchema
+      );
+
+      // API may return field as `events` or `auditLogs`
+      const entries = response.events ?? response.auditLogs ?? [];
+
+      for (const entry of entries) {
+        const key = `${entry.timestamp ?? ""}::${entry.userEmail ?? ""}::${entry.eventType ?? ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        allLogs.push({
+          timestamp: entry.timestamp,
+          userEmail: entry.userEmail,
+          eventType: entry.eventType,
+          details: entry.details
+        });
+      }
+
+      hasNextPage = Boolean(response.pagination?.hasNextPage);
+      page += 1;
+
+      if (page > 1000) {
+        throw new Error("Aborting audit log pagination at 1000 pages per chunk. Narrow date range.");
+      }
+    }
+  }
+
+  return allLogs;
+}
+
+export async function getRepoBlocklists(): Promise<RepoBlocklistEntry[]> {
+  const response = await cursorRequest(
+    "/settings/repo-blocklists/repos",
+    { method: "GET" },
+    RepoBlocklistsResponseSchema
+  );
+  return response.repos as RepoBlocklistEntry[];
+}
+
+export async function upsertRepoBlocklist(url: string, patterns: string[]): Promise<void> {
+  await cursorRequest(
+    "/settings/repo-blocklists/repos/upsert",
+    {
+      method: "POST",
+      json: { repos: [{ url, patterns }] }
+    },
+    UpsertRepoBlocklistResponseSchema
+  );
+}
+
+export async function deleteRepoBlocklist(repoId: string): Promise<void> {
+  await cursorRequest(
+    `/settings/repo-blocklists/repos/${encodeURIComponent(repoId)}`,
+    { method: "DELETE" },
+    DeleteResponseSchema
+  );
 }

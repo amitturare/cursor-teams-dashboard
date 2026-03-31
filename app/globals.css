@@ -96,8 +96,15 @@ body {
 .mainContent {
   flex: 1;
   min-width: 0;
-  max-width: 1560px;
   padding: 24px 32px 32px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pageInner {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .topbar {
@@ -106,6 +113,7 @@ body {
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+  min-height: 56px;
 }
 
 h1 {
@@ -903,43 +911,115 @@ tr:last-child td {
 /* ── Definitions Page ── */
 
 .defsPage {
-  max-width: 800px;
+  width: 100%;
 }
 
-.defsPage h2 {
-  margin-bottom: 4px;
+.defsPageHeader {
+  margin-bottom: 28px;
 }
 
-.defsPage > .muted {
-  margin: 0 0 18px;
+.defsPageHeader h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.defsPageHeader .muted {
+  margin: 0;
   font-size: 13px;
 }
 
 .defsGrid {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 
 .defCard {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--card);
-  padding: 14px 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: row;
+  min-height: 140px;
+}
+
+/* Left pane: number + name + tagline */
+.defCardLeft {
+  width: 190px;
+  flex-shrink: 0;
+  padding: 20px 18px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #fafaf6;
+}
+
+.defCardNum {
+  font-size: 22px;
+  font-weight: 700;
+  color: #d8d7ce;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .defCardTitle {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 13px;
-  font-weight: 600;
-  text-transform: capitalize;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
 }
 
-.defCardBody {
+.defCardTagline {
   margin: 0;
   font-size: 12px;
-  line-height: 1.55;
   color: var(--muted);
+  line-height: 1.45;
+}
+
+/* Right pane: stacked rows */
+.defCardRight {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.defCardRow {
+  flex: 1;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.defCardRow:last-child {
+  border-bottom: none;
+}
+
+.defCardLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.defCardValue {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.defCardFormula {
+  font-family: "Iosevka", "SF Mono", "IBM Plex Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text);
 }
 
 @media (max-width: 740px) {
@@ -1009,4 +1089,196 @@ tr:last-child td {
     width: auto;
     height: 1px;
   }
+}
+
+/* ── Drill-Down Panel (Feature 2) ── */
+.drillDownOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.22);
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drillDownPanel {
+  width: 560px;
+  max-width: 92vw;
+  height: 100vh;
+  background: var(--card);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  padding: 24px;
+  animation: drillSlideIn 180ms ease;
+}
+
+@keyframes drillSlideIn {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+.drillDownHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.drillDownHeader h2 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.drillDownClose {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.drillDownClose:hover {
+  color: var(--text);
+}
+
+.drillDownFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.paginationControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tableRowClickable {
+  cursor: pointer;
+}
+
+.tableRowClickable:hover td {
+  background: #f7f6ef;
+}
+
+.tableRowActive td {
+  background: #f0efe8 !important;
+}
+
+/* ── Sparklines (Feature 3) ── */
+.sparkline {
+  display: block;
+  color: var(--text);
+  opacity: 0.65;
+}
+
+.teamChart {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.teamChartSvg {
+  display: block;
+  width: 100%;
+  color: var(--text);
+}
+
+/* ── Audit Log Tab (Feature 4) ── */
+.auditPage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auditControls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.auditSearchInput {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--text);
+  min-width: 220px;
+  outline: none;
+}
+
+.auditSearchInput:focus {
+  border-color: var(--text);
+}
+
+.auditDetails {
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.auditFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* ── Security / Repo Blocklist (Feature 5) ── */
+.securityPage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.securityAddRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.securityAddRow input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--card);
+  color: var(--text);
+  outline: none;
+  min-width: 200px;
+}
+
+.securityAddRow input:focus {
+  border-color: var(--text);
+}
+
+.deleteButton {
+  color: var(--error) !important;
+  border-color: var(--error) !important;
+}
+
+.deleteButton:hover {
+  background: #fff0f0 !important;
+}
+
+.patternsList {
+  font-size: 12px;
+  color: var(--muted);
 }
