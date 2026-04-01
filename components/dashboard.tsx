@@ -549,14 +549,6 @@ export function Dashboard() {
 		}
 	}, [groups, activeGroupId]);
 
-	const groupByUserEmail = useMemo(() => {
-		const lookup = new Map<string, string>();
-		for (const group of groups) {
-			for (const email of group.userEmails) lookup.set(email, group.name);
-		}
-		return lookup;
-	}, [groups]);
-
 	/** True when every team member is selected as individuals (same effect as no filter). */
 	const isIndividualSelectionFullRoster = useMemo(() => {
 		if (filterCategory !== "individuals") return false;
@@ -1281,20 +1273,19 @@ export function Dashboard() {
 								<thead>
 									<tr>
 										<th>User</th>
-										<th>Group</th>
 										<th>Favorite Model</th>
+										<th>Trend</th>
 										<th>Usage</th>
 										<th>Productivity</th>
 										<th>Agent Eff.</th>
 										<th>Tab Eff.</th>
 										<th>Adoption</th>
-										<th>Trend</th>
 									</tr>
 								</thead>
 								<tbody>
 									{effectiveRows.length === 0 ? (
 										<tr>
-											<td colSpan={9} className="muted">
+											<td colSpan={8} className="muted">
 												No data for the current filter.
 											</td>
 										</tr>
@@ -1318,14 +1309,13 @@ export function Dashboard() {
 														<span className="muted tiny">{row.userEmail}</span>
 													</div>
 												</td>
-												<td>{groupByUserEmail.get(row.userEmail) || "-"}</td>
 												<td>{row.favoriteModel}</td>
+												<td><Sparkline points={row.dailyTrend} /></td>
 												<td>{row.usageCount}</td>
 												<td>{row.productivityScore}</td>
 												<td>{pct(row.agentEfficiency)}</td>
 												<td>{pct(row.tabEfficiency)}</td>
 												<td>{pct(row.adoptionRate)}</td>
-												<td><Sparkline points={row.dailyTrend} /></td>
 											</tr>
 										))
 									)}
