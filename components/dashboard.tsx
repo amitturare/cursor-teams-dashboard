@@ -39,6 +39,7 @@ interface UserGroup {
 	id: string;
 	name: string;
 	userEmails: string[];
+	dbId?: number;
 }
 
 type FilterCategory = "all" | "groups" | "individuals";
@@ -90,7 +91,6 @@ interface RepoBlocklistEntry {
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const responseCache = new Map<string, { data: ApiResponse; fetchedAt: number }>();
 const inflightRequests = new Map<string, Promise<ApiResponse>>();
-const GROUPS_KEY = "cursor-dashboard-user-groups";
 
 function pct(value: number) {
 	return `${(value * 100).toFixed(0)}%`;
@@ -515,32 +515,31 @@ export function Dashboard() {
 		if (users.length === 0) return;
 		const validEmails = new Set(users.map((u) => u.email));
 		if (!preferencesReady) {
-			let nextGroups: UserGroup[] = [];
-			try {
-				const rawGroups = window.localStorage.getItem(GROUPS_KEY);
-				if (rawGroups) {
-					nextGroups = sanitizeGroups(JSON.parse(rawGroups) as UserGroup[], validEmails);
-				}
-			} catch {
-				nextGroups = [];
-			}
-			nextGroups = applySystemGroupsSync(nextGroups, users);
-			setGroups(nextGroups);
-			setActiveGroupId(nextGroups[0]?.id ?? null);
-			setPreferencesReady(true);
+			fetch("/api/groups")
+				.then((res) => res.json())
+				.then((apiGroups: Array<{ id: number; name: string; description?: string; color?: string; members: string[] }>) => {
+					const loaded: UserGroup[] = apiGroups.map((g) => ({
+						id: `db-${g.id}`,
+						name: g.name,
+						userEmails: g.members.filter((e) => validEmails.has(e)),
+						dbId: g.id
+					}));
+					const sanitized = sanitizeGroups(loaded, validEmails);
+					const nextGroups = applySystemGroupsSync(sanitized, users);
+					setGroups(nextGroups);
+					setActiveGroupId(nextGroups[0]?.id ?? null);
+					setPreferencesReady(true);
+				})
+				.catch(() => {
+					const nextGroups = applySystemGroupsSync([], users);
+					setGroups(nextGroups);
+					setActiveGroupId(nextGroups[0]?.id ?? null);
+					setPreferencesReady(true);
+				});
 			return;
 		}
 		setGroups((current) => applySystemGroupsSync(sanitizeGroups(current, validEmails), users));
 	}, [users, preferencesReady]);
-
-	useEffect(() => {
-		if (!preferencesReady) return;
-		try {
-			window.localStorage.setItem(GROUPS_KEY, JSON.stringify(groups.filter((g) => !isSystemGroup(g.id))));
-		} catch {
-			// storage unavailable or full — groups won't persist this session
-		}
-	}, [groups, preferencesReady]);
 
 	useEffect(() => {
 		if (!activeGroupId) return;
@@ -691,32 +690,75 @@ export function Dashboard() {
 
 	function assignUserToGroup(email: string, groupId: string) {
 		setGroups((current) => applySystemGroupsSync(addUsersToGroup(current, [email], groupId), users));
+		const targetGroup = groups.find((g) => g.id === groupId);
+		if (targetGroup?.dbId) {
+			fetch(`/api/groups/${targetGroup.dbId}/members`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ emails: [email] })
+			}).catch(() => {});
+		}
 	}
 
 	function clearUserGroup(email: string) {
+		// Find all custom groups that contain this email before state update
+		const groupsWithEmail = groups.filter((g) => !isSystemGroup(g.id) && g.userEmails.includes(email) && g.dbId);
 		setGroups((current) => {
 			const cleared = current.map((group) =>
 				isSystemGroup(group.id) ? group : { ...group, userEmails: group.userEmails.filter((item) => item !== email) },
 			);
 			return applySystemGroupsSync(cleared, users);
 		});
+		for (const g of groupsWithEmail) {
+			fetch(`/api/groups/${g.dbId}/members`, {
+				method: "DELETE",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ emails: [email] })
+			}).catch(() => {});
+		}
 	}
 
 	function addGroup() {
 		const customCount = groups.filter((g) => !isSystemGroup(g.id)).length;
-		const nextGroup: UserGroup = { id: createGroupId(), name: `Group ${customCount + 1}`, userEmails: [] };
-		setGroups((current) => [...current, nextGroup]);
-		setActiveGroupId(nextGroup.id);
+		const name = `Group ${customCount + 1}`;
+		fetch("/api/groups", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name })
+		})
+			.then((res) => res.json())
+			.then((created: { id: number; name: string; members: string[] }) => {
+				const nextGroup: UserGroup = { id: `db-${created.id}`, name: created.name, userEmails: [], dbId: created.id };
+				setGroups((current) => [...current, nextGroup]);
+				setActiveGroupId(nextGroup.id);
+			})
+			.catch(() => {
+				// fallback: create locally without persistence
+				const nextGroup: UserGroup = { id: createGroupId(), name, userEmails: [] };
+				setGroups((current) => [...current, nextGroup]);
+				setActiveGroupId(nextGroup.id);
+			});
 	}
 
 	function renameActiveGroup(name: string) {
 		if (!activeGroupId || isSystemGroup(activeGroupId)) return;
 		setGroups((current) => current.map((g) => (g.id === activeGroupId ? { ...g, name } : g)));
+		const activeGroup = groups.find((g) => g.id === activeGroupId);
+		if (activeGroup?.dbId) {
+			fetch(`/api/groups/${activeGroup.dbId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name })
+			}).catch(() => { /* persist will retry on next save */ });
+		}
 	}
 
 	function deleteGroup(groupId: string) {
 		if (isSystemGroup(groupId)) return;
 		const deletedGroup = groups.find((g) => g.id === groupId);
+		if (deletedGroup?.dbId) {
+			fetch(`/api/groups/${deletedGroup.dbId}`, { method: "DELETE" }).catch(() => {});
+		}
 		setGroups((current) => {
 			const filtered = current.filter((g) => g.id !== groupId);
 			return applySystemGroupsSync(filtered, users);
@@ -754,6 +796,14 @@ export function Dashboard() {
 			return;
 		}
 		setGroups((current) => applySystemGroupsSync(addUsersToGroup(current, validEmails, activeGroupId), users));
+		const targetGroup = groups.find((g) => g.id === activeGroupId);
+		if (targetGroup?.dbId && validEmails.length > 0) {
+			fetch(`/api/groups/${targetGroup.dbId}/members`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ emails: validEmails })
+			}).catch(() => {});
+		}
 		setBulkEmails("");
 		setBulkStatus(
 			skippedCount > 0
