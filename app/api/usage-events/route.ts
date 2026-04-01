@@ -1,22 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-
-import { getUsageEvents } from "@/lib/cursor-admin";
+import { syncAndQueryUsageEvents } from "@/lib/sync/usage-events";
 import type { UsageEvent } from "@/lib/cursor-admin";
 
 export const dynamic = "force-dynamic";
 
-const CACHE_TTL_MS = 2 * 60 * 1000;
-
-type CachedUsageEvents = {
-  events: UsageEvent[];
-  fetchedAt: number;
-};
-
-const eventsCache = new Map<string, CachedUsageEvents>();
-
 const QuerySchema = z.object({
-  email: z.string().email(),
+  email: z.string().email().optional(),
   startDate: z.coerce.number().int().positive(),
   endDate: z.coerce.number().int().positive(),
   page: z.coerce.number().int().min(1).default(1),
@@ -33,16 +23,9 @@ export async function GET(request: NextRequest) {
       pageSize: request.nextUrl.searchParams.get("pageSize") || undefined
     });
 
-    const cacheKey = `${query.email}::${query.startDate}::${query.endDate}`;
-    const cached = eventsCache.get(cacheKey);
-
-    let allEvents: UsageEvent[];
-    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-      allEvents = cached.events;
-    } else {
-      allEvents = await getUsageEvents(query.startDate, query.endDate, { email: query.email });
-      eventsCache.set(cacheKey, { events: allEvents, fetchedAt: Date.now() });
-    }
+    const startDateStr = new Date(query.startDate).toISOString().slice(0, 10);
+    const endDateStr = new Date(query.endDate).toISOString().slice(0, 10);
+    const allEvents: UsageEvent[] = await syncAndQueryUsageEvents(startDateStr, endDateStr, query.email);
 
     const total = allEvents.length;
     const start = (query.page - 1) * query.pageSize;
