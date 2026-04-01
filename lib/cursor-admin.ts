@@ -547,3 +547,74 @@ export async function deleteRepoBlocklist(repoId: string): Promise<void> {
     DeleteResponseSchema
   );
 }
+
+export interface TeamSpendEntry {
+  userId?: number;
+  name?: string;
+  email: string;
+  role?: string;
+  spendCents?: number;
+  overallSpendCents?: number;
+  fastPremiumRequests?: number;
+  hardLimitOverrideDollars?: number;
+  monthlyLimitDollars?: number | null;
+}
+
+export interface TeamSpendResponse {
+  entries: TeamSpendEntry[];
+  billingCycleStart: number;
+}
+
+const TeamSpendResponseSchema = z.object({
+  teamMemberSpend: z.array(
+    z.object({
+      userId: z.number().optional(),
+      name: z.string().optional(),
+      email: z.string(),
+      role: z.string().optional(),
+      spendCents: z.number().optional(),
+      overallSpendCents: z.number().optional(),
+      fastPremiumRequests: z.number().optional(),
+      hardLimitOverrideDollars: z.number().optional(),
+      monthlyLimitDollars: z.number().nullable().optional()
+    }).passthrough()
+  ),
+  subscriptionCycleStart: z.number().optional(),
+  totalMembers: z.number().optional(),
+  totalPages: z.number().optional()
+});
+
+export async function getTeamSpend(): Promise<TeamSpendResponse> {
+  const allEntries: TeamSpendEntry[] = [];
+  let page = 1;
+  let totalPages = 1;
+  let billingCycleStart = 0;
+
+  while (page <= totalPages) {
+    const { data } = await cursorRequest(
+      "/teams/spend",
+      { method: "POST", json: { page, pageSize: 200 } },
+      TeamSpendResponseSchema
+    );
+    if (page === 1) {
+      billingCycleStart = data.subscriptionCycleStart ?? 0;
+      totalPages = data.totalPages ?? 1;
+    }
+    for (const entry of data.teamMemberSpend) {
+      allEntries.push({
+        userId: entry.userId,
+        name: entry.name,
+        email: entry.email,
+        role: entry.role,
+        spendCents: entry.spendCents,
+        overallSpendCents: entry.overallSpendCents,
+        fastPremiumRequests: entry.fastPremiumRequests,
+        hardLimitOverrideDollars: entry.hardLimitOverrideDollars,
+        monthlyLimitDollars: entry.monthlyLimitDollars
+      });
+    }
+    page += 1;
+  }
+
+  return { entries: allEntries, billingCycleStart };
+}

@@ -108,3 +108,18 @@ export const groupMembers = pgTable(
   },
   (t) => [unique().on(t.groupId, t.email)]
 );
+
+export const teamSpend = pgTable("team_spend", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").unique(),
+  email: text("email").notNull().unique(),
+  name: text("name"),
+  role: text("role"),
+  spendCents: integer("spend_cents"),
+  overallSpendCents: integer("overall_spend_cents"),
+  fastPremiumRequests: integer("fast_premium_requests"),
+  hardLimitOverrideDollars: integer("hard_limit_override_dollars"),
+  monthlyLimitDollars: integer("monthly_limit_dollars"),
+  billingCycleStart: timestamp("billing_cycle_start", { withTimezone: true }),
+  syncedAt: timestamp("synced_at", { withTimezone: true }).notNull()
+});
