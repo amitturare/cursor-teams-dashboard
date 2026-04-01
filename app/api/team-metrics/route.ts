@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getDailyUsageData, getTeamMembers } from "@/lib/cursor-admin";
+import { syncAndQueryDailyUsage } from "@/lib/sync/daily-usage";
+import { syncAndQueryTeamMembers } from "@/lib/sync/team-members";
 import { buildUserWindowMetrics, getSelectableWindows, resolveWindowSelection } from "@/lib/metrics";
 
 const QuerySchema = z.object({
@@ -9,7 +10,7 @@ const QuerySchema = z.object({
 });
 
 export const dynamic = "force-dynamic";
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 60 * 60 * 1000;
 
 type MetricRows = ReturnType<typeof buildUserWindowMetrics>;
 
@@ -46,8 +47,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ...cached.value, cached: true });
     }
 
-    const teamMembers = await getTeamMembers();
-    const dailyUsageData = await getDailyUsageData(selectedWindow.startDate, selectedWindow.endDate);
+    const startDateStr = new Date(selectedWindow.startDate).toISOString().slice(0, 10);
+    const endDateStr = new Date(selectedWindow.endDate).toISOString().slice(0, 10);
+    const [teamMembers, dailyUsageData] = await Promise.all([
+      syncAndQueryTeamMembers(),
+      syncAndQueryDailyUsage(startDateStr, endDateStr)
+    ]);
     const rows = buildUserWindowMetrics({
       teamMembers,
       dailyUsageData,
