@@ -931,11 +931,15 @@ export function Dashboard() {
 
 	async function handleQuotaCapChange(cap: number) {
 		setQuotaCap(cap);
-		await fetch("/api/settings", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ key: "quota_cap", value: String(cap) })
-		});
+		try {
+			await fetch("/api/settings", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ key: "quota_cap", value: String(cap) })
+			});
+		} catch {
+			// persists on next successful save; UI already reflects new cap
+		}
 	}
 
 	async function deleteRepo(repoId: string) {
@@ -1106,6 +1110,7 @@ export function Dashboard() {
 										<AICommittedChart
 											rows={effectiveRows}
 											window={data.selectedWindow}
+											selectedUserEmail={drillDownEmail}
 										/>
 									)}
 									{data?.selectedWindow && (

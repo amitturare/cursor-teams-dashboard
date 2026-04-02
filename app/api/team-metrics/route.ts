@@ -22,7 +22,7 @@ type CachedMetricsResponse = {
   definitions: MetricDefinition[];
   rows: MetricRows;
   availableWindows: Array<{ id: string; label: string }>;
-  selectedWindow: { id: string; label: string; startDate: number; endDate: number };
+  selectedWindow: { id: string; label: string; startDate: number; endDate: number; totalDays: number };
   cached?: boolean;
 };
 
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
       definitions: METRIC_DEFINITIONS,
       rows,
       availableWindows: getSelectableWindows().map((window) => ({ id: window.id, label: window.label })),
-      selectedWindow: { id: selectedWindow.id, label: selectedWindow.label, startDate: selectedWindow.startDate, endDate: selectedWindow.endDate }
+      selectedWindow: { id: selectedWindow.id, label: selectedWindow.label, startDate: selectedWindow.startDate, endDate: selectedWindow.endDate, totalDays: selectedWindow.totalDays }
     };
 
     metricsCache.set(cacheKey, {

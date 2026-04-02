@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { UserWindowMetricRow, TimeWindow } from "@/lib/metrics";
 
 interface AICommittedChartProps {
   rows: UserWindowMetricRow[];
   window: TimeWindow;
+  selectedUserEmail?: string | null;
 }
 
 const CHART_H = 120;
@@ -12,8 +13,13 @@ const PAD = { top: 8, right: 8, bottom: 24, left: 40 };
 const INNER_W = CHART_W - PAD.left - PAD.right;
 const INNER_H = CHART_H - PAD.top - PAD.bottom;
 
-export function AICommittedChart({ rows, window }: AICommittedChartProps) {
-  const [viewMode, setViewMode] = useState<"team" | string>("team");
+export function AICommittedChart({ rows, window, selectedUserEmail }: AICommittedChartProps) {
+  const [viewMode, setViewMode] = useState<"team" | string>(selectedUserEmail ?? "team");
+
+  // Sync with external drill-down selection
+  useEffect(() => {
+    setViewMode(selectedUserEmail ?? "team");
+  }, [selectedUserEmail]);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string } | null>(null);
 
   const userOptions = useMemo(
@@ -126,7 +132,7 @@ export function AICommittedChart({ rows, window }: AICommittedChartProps) {
                 d={linePath}
                 fill="none"
                 stroke="var(--coditas-turquoise, #11CAE6)"
-                strokeWidth={1.5}
+                strokeWidth={2}
                 strokeLinejoin="round"
               />
               {dailyPoints.map((p, i) => (
@@ -134,7 +140,7 @@ export function AICommittedChart({ rows, window }: AICommittedChartProps) {
                   key={`dot-${p.date}`}
                   cx={PAD.left + i * step + step / 2}
                   cy={lineY(p.prompts)}
-                  r={2.5}
+                  r={3}
                   fill="var(--coditas-turquoise, #11CAE6)"
                 />
               ))}

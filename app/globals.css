@@ -22,6 +22,14 @@
   /* Typography */
   --font-heading: 'Urbanist', sans-serif;
   --font-body: 'Inter', sans-serif;
+
+  /* Spec-named aliases (matches coditas-brand design system) */
+  --coditas-text: #171717;
+  --coditas-grey-1: #736A85;
+  --coditas-grey-2: #EBE9EF;
+  --coditas-grey-3: #f5f5f5;
+  --coditas-gradient: linear-gradient(135deg, #9900E6, #11CAE6);
+  --coditas-gradient-alt: linear-gradient(135deg, #9900E6, #FF174F);
 }
 
 * {
