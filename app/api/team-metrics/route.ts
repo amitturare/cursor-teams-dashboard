@@ -42,8 +42,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ...cached.value, cached: true });
     }
 
+    const oneDayMs = 24 * 60 * 60 * 1000;
     const startDateStr = new Date(selectedWindow.startDate).toISOString().slice(0, 10);
-    const endDateStr = new Date(selectedWindow.endDate).toISOString().slice(0, 10);
+    const inclusiveEndMs = selectedWindow.endDate - oneDayMs;
+    const endDateStr = new Date(inclusiveEndMs).toISOString().slice(0, 10);
     const [teamMembers, dailyUsageData] = await Promise.all([
       syncAndQueryTeamMembers(),
       syncAndQueryDailyUsage(startDateStr, endDateStr)

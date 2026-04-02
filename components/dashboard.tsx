@@ -7,7 +7,7 @@ import { AICommittedChart } from "@/components/widgets/AICommittedChart";
 import { QuotaChart } from "@/components/widgets/QuotaChart";
 import { MetricDefinitionsPanel } from "@/components/widgets/MetricDefinitionsPanel";
 import { OverallScorePill } from "@/components/widgets/OverallScorePill";
-import type { DailyUsageRow } from "@/lib/cursor-admin";
+import type { DailyUsageRow, TeamSpendEntry } from "@/lib/cursor-admin";
 import {
 	type WidgetMetric,
 	type WidgetMetricAssignment,
@@ -49,8 +49,8 @@ interface UserGroup {
 type FilterCategory = "all" | "groups" | "individuals";
 
 interface WidgetState {
-  metric: WidgetMetric;
-  selectedBand: 0 | 1 | 2 | 3 | null;
+	metric: WidgetMetric;
+	selectedBand: 0 | 1 | 2 | 3 | null;
 }
 
 interface UsageEventItem {
@@ -147,14 +147,14 @@ async function loadUsageEvents(
 	email: string,
 	startDate: number,
 	endDate: number,
-	page: number
+	page: number,
 ): Promise<UsageEventsResponse> {
 	const params = new URLSearchParams({
 		email,
 		startDate: String(startDate),
 		endDate: String(endDate),
 		page: String(page),
-		pageSize: "50"
+		pageSize: "50",
 	});
 	const response = await fetch(`/api/usage-events?${params}`, { cache: "no-store" });
 	if (!response.ok) {
@@ -168,7 +168,7 @@ async function loadAuditLogs(
 	windowId: string,
 	search: string,
 	eventTypes: string,
-	page: number
+	page: number,
 ): Promise<AuditLogsResponse> {
 	const params = new URLSearchParams({ window: windowId, page: String(page) });
 	if (search) params.set("search", search);
@@ -231,7 +231,10 @@ function isSystemGroup(groupId: string) {
  * Custom groups are preserved; removed emails are stripped from them.
  */
 function applySystemGroupsSync(groups: UserGroup[], users: UserRecord[]): UserGroup[] {
-	const removedEmails = users.filter((u) => u.isRemoved).map((u) => u.email).sort();
+	const removedEmails = users
+		.filter((u) => u.isRemoved)
+		.map((u) => u.email)
+		.sort();
 	const removedSet = new Set(removedEmails);
 
 	const customGroups = groups
@@ -260,7 +263,15 @@ function addUsersToGroup(groups: UserGroup[], emails: string[], targetGroupId: s
 	});
 }
 
-function Sparkline({ points, width = 80, height = 24 }: { points: MetricRow["dailyTrend"]; width?: number; height?: number }) {
+function Sparkline({
+	points,
+	width = 80,
+	height = 24,
+}: {
+	points: MetricRow["dailyTrend"];
+	width?: number;
+	height?: number;
+}) {
 	if (points.length < 2) return <span className="muted tiny">—</span>;
 	const maxCount = Math.max(...points.map((p) => p.usageCount), 1);
 	const step = width / (points.length - 1);
@@ -271,26 +282,27 @@ function Sparkline({ points, width = 80, height = 24 }: { points: MetricRow["dai
 	});
 	return (
 		<svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true" className="sparkline">
-			<polyline points={pathPoints.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+			<polyline
+				points={pathPoints.join(" ")}
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinejoin="round"
+				strokeLinecap="round"
+			/>
 		</svg>
 	);
 }
 
-function UserQuotaSection({
-	email,
-	windowId,
-	quotaCap
-}: {
-	email: string;
-	windowId: string;
-	quotaCap: number;
-}) {
+function UserQuotaSection({ email, windowId, quotaCap }: { email: string; windowId: string; quotaCap: number }) {
 	const [rows, setRows] = useState<DailyUsageRow[]>([]);
 
 	useEffect(() => {
 		fetch(`/api/daily-usage?window=${windowId}&email=${encodeURIComponent(email)}`)
 			.then((r) => r.json())
-			.then((data: { rows: DailyUsageRow[] }) => { if (data.rows) setRows(data.rows); })
+			.then((data: { rows: DailyUsageRow[] }) => {
+				if (data.rows) setRows(data.rows);
+			})
 			.catch(() => {});
 	}, [email, windowId]);
 
@@ -300,9 +312,7 @@ function UserQuotaSection({
 
 	return (
 		<div style={{ marginTop: 16, padding: "0 16px 16px" }}>
-			<h3 style={{ fontFamily: "var(--font-heading)", fontSize: 13, marginBottom: 8 }}>
-				Quota Usage
-			</h3>
+			<h3 style={{ fontFamily: "var(--font-heading)", fontSize: 13, marginBottom: 8 }}>Quota Usage</h3>
 			<table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
 				<thead>
 					<tr style={{ color: "var(--muted)", textAlign: "left" }}>
@@ -315,15 +325,21 @@ function UserQuotaSection({
 					{rows.map((r) => {
 						const dateStr = new Date(r.date).toISOString().slice(0, 10);
 						const d = new Date(dateStr + "T00:00:00Z");
-						const dayName = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getUTCDay()];
+						const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()];
 						const weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
 						const used = r.subscriptionIncludedReqs ?? 0;
-						const anomaly = used > quotaCap * 0.30;
+						const anomaly = used > quotaCap * 0.3;
 						return (
-							<tr key={dateStr} style={{ color: anomaly ? "var(--coditas-red, #FF174F)" : weekend ? "var(--muted)" : "var(--text)" }}>
+							<tr
+								key={dateStr}
+								style={{ color: anomaly ? "var(--coditas-red, #FF174F)" : weekend ? "var(--muted)" : "var(--text)" }}
+							>
 								<td style={{ padding: "3px 8px" }}>{dateStr}</td>
 								<td style={{ padding: "3px 8px" }}>{weekend ? `✗ ${dayName}` : `✓ ${dayName}`}</td>
-								<td style={{ padding: "3px 8px" }}>{used}{anomaly && " ⚠"}</td>
+								<td style={{ padding: "3px 8px" }}>
+									{used}
+									{anomaly && " ⚠"}
+								</td>
 							</tr>
 						);
 					})}
@@ -367,8 +383,9 @@ export function Dashboard() {
 	const [drillDownTotal, setDrillDownTotal] = useState(0);
 	const [drillDownTotalPages, setDrillDownTotalPages] = useState(1);
 	const [quotaCap, setQuotaCap] = useState<number>(500);
-	const [dailyRows, setDailyRows] = useState<DailyUsageRow[]>([]);
-	const [billingCycleResetDate, setBillingCycleResetDate] = useState<string | undefined>(undefined);
+	type SpendRow = TeamSpendEntry & { billingCycleStart?: Date | null };
+	const [spendRows, setSpendRows] = useState<SpendRow[]>([]);
+	const [spendLoading, setSpendLoading] = useState(false);
 	// Feature 4 — Audit Log
 	const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
 	const [auditLoading, setAuditLoading] = useState(false);
@@ -436,8 +453,8 @@ export function Dashboard() {
 
 	// Reset widget band selections when time window or filter changes
 	useEffect(() => {
-		setWidgets((prev) =>
-			prev.map((w) => ({ ...w, selectedBand: null })) as [WidgetState, WidgetState, WidgetState, WidgetState]
+		setWidgets(
+			(prev) => prev.map((w) => ({ ...w, selectedBand: null })) as [WidgetState, WidgetState, WidgetState, WidgetState],
 		);
 	}, [windowId, filterCategory, filterGroupNames, filterIndividualEmails]);
 
@@ -462,7 +479,7 @@ export function Dashboard() {
 					drillDownEmail!,
 					data!.selectedWindow.startDate,
 					data!.selectedWindow.endDate,
-					drillDownPage
+					drillDownPage,
 				);
 				if (!cancelled) {
 					setDrillDownEvents(result.events);
@@ -476,7 +493,9 @@ export function Dashboard() {
 			}
 		}
 		loadEvents();
-		return () => { cancelled = true; };
+		return () => {
+			cancelled = true;
+		};
 	}, [drillDownEmail, drillDownPage, data?.selectedWindow]);
 
 	// Feature 2 — close drill-down on Escape
@@ -519,10 +538,11 @@ export function Dashboard() {
 			}
 		}
 		loadLogs();
-		return () => { cancelled = true; };
+		return () => {
+			cancelled = true;
+		};
 	}, [activeTab, windowId, auditSearch, auditEventTypes, auditPage]);
 
-	// Load quota cap and daily rows when window changes
 	useEffect(() => {
 		fetch("/api/settings?key=quota_cap")
 			.then((r) => r.json())
@@ -531,14 +551,30 @@ export function Dashboard() {
 				if (!isNaN(parsed)) setQuotaCap(parsed);
 			})
 			.catch(() => {});
+	}, []);
 
-		fetch(`/api/daily-usage?window=${windowId}`)
-			.then((r) => r.json())
-			.then((d: { rows: DailyUsageRow[] }) => {
-				if (d.rows) setDailyRows(d.rows);
+	// Quota chart: fastPremiumRequests from POST /teams/spend (GET /api/spend), billing-cycle scoped by Cursor
+	useEffect(() => {
+		if (activeTab !== "analytics") return;
+		let cancelled = false;
+		setSpendLoading(true);
+		fetch("/api/spend")
+			.then(async (r) => {
+				const d = (await r.json()) as unknown;
+				if (cancelled) return;
+				if (Array.isArray(d)) setSpendRows(d as SpendRow[]);
+				else setSpendRows([]);
 			})
-			.catch(() => {});
-	}, [windowId]);
+			.catch(() => {
+				if (!cancelled) setSpendRows([]);
+			})
+			.finally(() => {
+				if (!cancelled) setSpendLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [activeTab]);
 
 	// Feature 5 — load repo blocklists when security tab opens
 	useEffect(() => {
@@ -557,7 +593,9 @@ export function Dashboard() {
 			}
 		}
 		loadBlocklists();
-		return () => { cancelled = true; };
+		return () => {
+			cancelled = true;
+		};
 	}, [activeTab]);
 
 	const rows = useMemo(() => data?.rows ?? [], [data]);
@@ -601,19 +639,21 @@ export function Dashboard() {
 		if (!preferencesReady) {
 			fetch("/api/groups")
 				.then((res) => res.json())
-				.then((apiGroups: Array<{ id: number; name: string; description?: string; color?: string; members: string[] }>) => {
-					const loaded: UserGroup[] = apiGroups.map((g) => ({
-						id: `db-${g.id}`,
-						name: g.name,
-						userEmails: g.members.filter((e) => validEmails.has(e)),
-						dbId: g.id
-					}));
-					const sanitized = sanitizeGroups(loaded, validEmails);
-					const nextGroups = applySystemGroupsSync(sanitized, users);
-					setGroups(nextGroups);
-					setActiveGroupId(nextGroups[0]?.id ?? null);
-					setPreferencesReady(true);
-				})
+				.then(
+					(apiGroups: Array<{ id: number; name: string; description?: string; color?: string; members: string[] }>) => {
+						const loaded: UserGroup[] = apiGroups.map((g) => ({
+							id: `db-${g.id}`,
+							name: g.name,
+							userEmails: g.members.filter((e) => validEmails.has(e)),
+							dbId: g.id,
+						}));
+						const sanitized = sanitizeGroups(loaded, validEmails);
+						const nextGroups = applySystemGroupsSync(sanitized, users);
+						setGroups(nextGroups);
+						setActiveGroupId(nextGroups[0]?.id ?? null);
+						setPreferencesReady(true);
+					},
+				)
 				.catch(() => {
 					const nextGroups = applySystemGroupsSync([], users);
 					setGroups(nextGroups);
@@ -680,14 +720,12 @@ export function Dashboard() {
 		const activeWidgets = widgets.filter((w) => w.selectedBand !== null);
 		if (activeWidgets.length === 0) return analyticsRows;
 		// Hoist max computation outside the per-row filter loop
-		const maxByMetric = new Map(
-			activeWidgets.map((w) => [w.metric, getMetricMax(analyticsRows, w.metric)])
-		);
+		const maxByMetric = new Map(activeWidgets.map((w) => [w.metric, getMetricMax(analyticsRows, w.metric)]));
 		return analyticsRows.filter((row) =>
 			activeWidgets.every((w) => {
 				const max = maxByMetric.get(w.metric) ?? 0;
 				return getBand(row[w.metric], w.metric, max) === w.selectedBand;
-			})
+			}),
 		);
 	}, [analyticsRows, widgets]);
 
@@ -709,6 +747,55 @@ export function Dashboard() {
 	}, [effectiveRows]);
 
 	const rowCount = Math.max(effectiveRows.length, 1);
+
+	const billingCycleResetDate = useMemo(() => {
+		const raw = spendRows.find((r) => r.billingCycleStart != null)?.billingCycleStart;
+		if (raw == null) return undefined;
+		const dt = raw instanceof Date ? raw : new Date(raw as string);
+		if (Number.isNaN(dt.getTime())) return undefined;
+		return dt.toLocaleDateString(undefined, { dateStyle: "medium" });
+	}, [spendRows]);
+
+	const billingCycleStartMs = useMemo(() => {
+		const raw = spendRows.find((r) => r.billingCycleStart != null)?.billingCycleStart;
+		if (raw == null) return undefined;
+		const dt = raw instanceof Date ? raw : new Date(raw as string);
+		const ms = dt.getTime();
+		return Number.isNaN(ms) ? undefined : ms;
+	}, [spendRows]);
+
+	/** Must stay aligned with QuotaChart `EARLY_CYCLE_DAY_COUNT` (10). */
+	const spendBillingCycleSubtitle = useMemo(() => {
+		const days = 10;
+		if (billingCycleResetDate) {
+			return `Cycle from ${billingCycleResetDate} · First ${days} cycle days (UTC)`;
+		}
+		return `First ${days} cycle days (UTC)`;
+	}, [billingCycleResetDate]);
+
+	const spendPremiumByEmail = useMemo(() => {
+		const m = new Map<string, number>();
+		for (const s of spendRows) {
+			m.set(s.email.toLowerCase(), s.fastPremiumRequests ?? 0);
+		}
+		return m;
+	}, [spendRows]);
+
+	const premiumQuotaBars = useMemo(() => {
+		return effectiveRows
+			.map((r) => {
+				const fullName = resolveUserName(r.userName, r.userEmail);
+				const displayName = fullName.length > 0 ? fullName : r.userEmail.split("@")[0];
+				return {
+					id: r.userEmail,
+					label: displayName,
+					value: spendPremiumByEmail.get(r.userEmail.toLowerCase()) ?? 0,
+				};
+			})
+			.sort((a, b) => b.value - a.value)
+			.slice(0, 10);
+	}, [effectiveRows, spendPremiumByEmail]);
+
 	const activeGroup = groups.find((g) => g.id === activeGroupId) ?? null;
 
 	const filteredPopoverUsers = useMemo(() => {
@@ -779,7 +866,7 @@ export function Dashboard() {
 			fetch(`/api/groups/${targetGroup.dbId}/members`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ emails: [email] })
+				body: JSON.stringify({ emails: [email] }),
 			}).catch(() => {});
 		}
 	}
@@ -797,7 +884,7 @@ export function Dashboard() {
 			fetch(`/api/groups/${g.dbId}/members`, {
 				method: "DELETE",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ emails: [email] })
+				body: JSON.stringify({ emails: [email] }),
 			}).catch(() => {});
 		}
 	}
@@ -808,7 +895,7 @@ export function Dashboard() {
 		fetch("/api/groups", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ name })
+			body: JSON.stringify({ name }),
 		})
 			.then((res) => res.json())
 			.then((created: { id: number; name: string; members: string[] }) => {
@@ -832,8 +919,10 @@ export function Dashboard() {
 			fetch(`/api/groups/${activeGroup.dbId}`, {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name })
-			}).catch(() => { /* persist will retry on next save */ });
+				body: JSON.stringify({ name }),
+			}).catch(() => {
+				/* persist will retry on next save */
+			});
 		}
 	}
 
@@ -885,7 +974,7 @@ export function Dashboard() {
 			fetch(`/api/groups/${targetGroup.dbId}/members`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ emails: validEmails })
+				body: JSON.stringify({ emails: validEmails }),
 			}).catch(() => {});
 		}
 		setBulkEmails("");
@@ -912,7 +1001,7 @@ export function Dashboard() {
 			const response = await fetch("/api/repo-blocklists", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ url: newRepoUrl.trim(), patterns })
+				body: JSON.stringify({ url: newRepoUrl.trim(), patterns }),
 			});
 			if (!response.ok) {
 				const body = (await response.json()) as { error?: string };
@@ -926,19 +1015,6 @@ export function Dashboard() {
 			setSecurityMutateError(err instanceof Error ? err.message : "Failed to add repo");
 		} finally {
 			setSecurityMutating(false);
-		}
-	}
-
-	async function handleQuotaCapChange(cap: number) {
-		setQuotaCap(cap);
-		try {
-			await fetch("/api/settings", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ key: "quota_cap", value: String(cap) })
-			});
-		} catch {
-			// persists on next successful save; UI already reflects new cap
 		}
 	}
 
@@ -1021,7 +1097,16 @@ export function Dashboard() {
 						aria-label="Security"
 						title="Security"
 					>
-						<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 20 20"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.6"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
 							<path d="M10 2L4 5v5c0 4 2.7 7.4 6 8.5 3.3-1.1 6-4.5 6-8.5V5L10 2z" />
 						</svg>
 					</button>
@@ -1051,882 +1136,898 @@ export function Dashboard() {
 			</nav>
 
 			<main className="mainContent">
-			<div className="pageInner">
-				<section className="topbar">
-					<div>
-						<h1 className="pageTitle">AI SparkLine</h1>
-					</div>
-					{activeTab === "analytics" ? (
-						<div className="controls">
-							<div className="windowPicker" role="group" aria-label="Time window">
-								{(presetWindows.length > 0
-									? presetWindows
-									: [
-											{ id: "past-7d", label: "Past 7D" },
-											{ id: "past-30d", label: "Past 30D" },
-											{ id: "current-month", label: "Current Month" },
-										]
-								).map((w) => (
-									<button
-										key={w.id}
-										type="button"
-										className={windowId === w.id ? "windowChip active" : "windowChip"}
-										onClick={() => setWindowId(w.id)}
-									>
-										{windowLabelMap.get(w.id) || w.label}
-									</button>
-								))}
-								{monthWindows.length > 0 ? (
-									<select
-										aria-label="Previous month"
-										className={windowId.startsWith("month-") ? "monthSelect monthSelectActive" : "monthSelect"}
-										value={monthWindowId}
-										onChange={(e) => setWindowId(e.target.value)}
-									>
-										{monthWindows.map((w) => (
-											<option key={w.id} value={w.id}>
-												{w.label}
-											</option>
-										))}
-									</select>
-								) : null}
-							</div>
+				<div className="pageInner">
+					<section className="topbar">
+						<div>
+							<h1 className="pageTitle">AI SparkLine</h1>
 						</div>
-					) : null}
-				</section>
-
-				{loading ? <p className="muted">Loading metrics...</p> : null}
-				{error ? <p className="error">{error}</p> : null}
-
-				{!loading && !error && activeTab === "analytics" ? (
-					<>
-						<section className="panel">
-							<div className="panelHeader">
-								<h2>Team Rollup</h2>
-							</div>
-							<div className="widgetSection">
-								<div className="widgetRowFixed">
-									{data?.selectedWindow && (
-										<AICommittedChart
-											rows={effectiveRows}
-											window={data.selectedWindow}
-											selectedUserEmail={drillDownEmail}
-										/>
-									)}
-									{data?.selectedWindow && (
-										<QuotaChart
-											dailyRows={dailyRows}
-											window={data.selectedWindow}
-											quotaCap={quotaCap}
-											onQuotaCapChange={handleQuotaCapChange}
-											billingCycleResetDate={billingCycleResetDate}
-										/>
-									)}
-								</div>
-								<div className="widgetRowChangeable">
-									{widgets.map((w, i) => (
-										<QuartileBarChart
-											key={`widget-${i}`}
-											users={analyticsRows}
-											metric={w.metric}
-											selectedBand={w.selectedBand}
-											widgetMetrics={[
-												widgets[0].metric,
-												widgets[1].metric,
-												widgets[2].metric,
-												widgets[3].metric,
-											] satisfies WidgetMetricAssignment}
-											widgetIndex={i as 0 | 1 | 2 | 3}
-											onMetricChange={(m) =>
-												setWidgets((prev) => {
-													if (prev[i].metric === m) return prev;
-													const next = [...prev] as [
-														WidgetState,
-														WidgetState,
-														WidgetState,
-														WidgetState,
-													];
-													const oldMetric = next[i].metric;
-													const swapIndex = next.findIndex(
-														(row, idx) => idx !== i && row.metric === m
-													);
-													if (swapIndex !== -1) {
-														next[swapIndex] = {
-															...next[swapIndex],
-															metric: oldMetric,
-															selectedBand: null,
-														};
-													}
-													next[i] = { metric: m, selectedBand: null };
-													return next;
-												})
-											}
-											onBandClick={(band) =>
-												setWidgets((prev) => {
-													const next = [...prev] as [WidgetState, WidgetState, WidgetState, WidgetState];
-													next[i] = { ...next[i], selectedBand: band };
-													return next;
-												})
-											}
-										/>
+						{activeTab === "analytics" ? (
+							<div className="controls">
+								<div className="windowPicker" role="group" aria-label="Time window">
+									{(presetWindows.length > 0
+										? presetWindows
+										: [
+												{ id: "past-7d", label: "Past 7D" },
+												{ id: "past-30d", label: "Past 30D" },
+												{ id: "current-month", label: "Current Month" },
+											]
+									).map((w) => (
+										<button
+											key={w.id}
+											type="button"
+											className={windowId === w.id ? "windowChip active" : "windowChip"}
+											onClick={() => setWindowId(w.id)}
+										>
+											{windowLabelMap.get(w.id) || w.label}
+										</button>
 									))}
+									{monthWindows.length > 0 ? (
+										<select
+											aria-label="Previous month"
+											className={windowId.startsWith("month-") ? "monthSelect monthSelectActive" : "monthSelect"}
+											value={monthWindowId}
+											onChange={(e) => setWindowId(e.target.value)}
+										>
+											{monthWindows.map((w) => (
+												<option key={w.id} value={w.id}>
+													{w.label}
+												</option>
+											))}
+										</select>
+									) : null}
 								</div>
-								{effectiveRows.length === 0 && analyticsRows.length > 0 ? (
-									<p className="muted" style={{ fontSize: 12, margin: "8px 0 0", textAlign: "center" }}>
-										No users match the selected widget filters.
-									</p>
-								) : null}
 							</div>
-							<div className="tableWrap">
-								<table>
-									<thead>
-										<tr>
-											<th>Total AI Requests</th>
-											<th>Avg Productivity</th>
-											<th>Avg Agent Eff.</th>
-											<th>Avg Tab Eff.</th>
-											<th>Avg Adoption</th>
-										</tr>
-									</thead>
-									<tbody>
-										<tr>
-											<td>{teamRollup.usageCount}</td>
-											<td>{(teamRollup.productivity / rowCount).toFixed(2)}</td>
-											<td>{pct(teamRollup.agentEfficiency / rowCount)}</td>
-											<td>{pct(teamRollup.tabEfficiency / rowCount)}</td>
-											<td>{pct(teamRollup.adoption / rowCount)}</td>
-										</tr>
-									</tbody>
-								</table>
-							</div>
-						</section>
+						) : null}
+					</section>
 
-						<div className="analyticsBar">
-							<div className="analyticsControls">
-								<span className="controlLabel">Filter</span>
-								<div className="filterAnchor" ref={filterRef}>
-									<button
-										type="button"
-										className={hasActiveFilter ? "filterTrigger filterTriggerActive" : "filterTrigger"}
-										onClick={() => {
-											setIsFilterOpen((p) => !p);
-											setFilterSearch("");
-										}}
-										aria-haspopup="dialog"
-										aria-expanded={isFilterOpen}
-									>
-										<span className="filterTriggerLabel">{getFilterSummary()}</span>
-										{hasActiveFilter ? (
-											<span
-												className="filterTriggerClear"
-												role="button"
-												tabIndex={0}
-												aria-label="Clear filter"
-												onClick={(e) => {
-													e.stopPropagation();
-													clearFilter();
-												}}
-												onKeyDown={(e) => {
-													if (e.key === "Enter") {
+					{loading ? <p className="muted">Loading metrics...</p> : null}
+					{error ? <p className="error">{error}</p> : null}
+
+					{!loading && !error && activeTab === "analytics" ? (
+						<>
+							<section className="panel">
+								<div className="panelHeader">
+									<h2>Team Rollup</h2>
+								</div>
+								<div className="widgetSection">
+									<div className="widgetRowFixed">
+										{data?.selectedWindow && <AICommittedChart rows={effectiveRows} />}
+										{data?.selectedWindow ? (
+											<QuotaChart
+												premiumBars={premiumQuotaBars}
+												isLoading={spendLoading}
+												quotaCap={quotaCap}
+												billingCycleSubtitle={spendBillingCycleSubtitle}
+												billingCycleStartMs={billingCycleStartMs}
+											/>
+										) : null}
+									</div>
+									<div className="widgetRowChangeable">
+										{widgets.map((w, i) => (
+											<QuartileBarChart
+												key={`widget-${i}`}
+												users={analyticsRows}
+												metric={w.metric}
+												selectedBand={w.selectedBand}
+												widgetMetrics={
+													[
+														widgets[0].metric,
+														widgets[1].metric,
+														widgets[2].metric,
+														widgets[3].metric,
+													] satisfies WidgetMetricAssignment
+												}
+												widgetIndex={i as 0 | 1 | 2 | 3}
+												onMetricChange={(m) =>
+													setWidgets((prev) => {
+														if (prev[i].metric === m) return prev;
+														const next = [...prev] as [WidgetState, WidgetState, WidgetState, WidgetState];
+														const oldMetric = next[i].metric;
+														const swapIndex = next.findIndex((row, idx) => idx !== i && row.metric === m);
+														if (swapIndex !== -1) {
+															next[swapIndex] = {
+																...next[swapIndex],
+																metric: oldMetric,
+																selectedBand: null,
+															};
+														}
+														next[i] = { metric: m, selectedBand: null };
+														return next;
+													})
+												}
+												onBandClick={(band) =>
+													setWidgets((prev) => {
+														const next = [...prev] as [WidgetState, WidgetState, WidgetState, WidgetState];
+														next[i] = { ...next[i], selectedBand: band };
+														return next;
+													})
+												}
+											/>
+										))}
+									</div>
+									{effectiveRows.length === 0 && analyticsRows.length > 0 ? (
+										<p className="muted" style={{ fontSize: 12, margin: "8px 0 0", textAlign: "center" }}>
+											No users match the selected widget filters.
+										</p>
+									) : null}
+								</div>
+								<div className="tableWrap">
+									<table>
+										<thead>
+											<tr>
+												<th>Total AI Requests</th>
+												<th>Avg Productivity</th>
+												<th>Avg Agent Eff.</th>
+												<th>Avg Tab Eff.</th>
+												<th>Avg Adoption</th>
+											</tr>
+										</thead>
+										<tbody>
+											<tr>
+												<td>{teamRollup.usageCount}</td>
+												<td>{(teamRollup.productivity / rowCount).toFixed(2)}</td>
+												<td>{pct(teamRollup.agentEfficiency / rowCount)}</td>
+												<td>{pct(teamRollup.tabEfficiency / rowCount)}</td>
+												<td>{pct(teamRollup.adoption / rowCount)}</td>
+											</tr>
+										</tbody>
+									</table>
+								</div>
+							</section>
+
+							<div className="analyticsBar">
+								<div className="analyticsControls">
+									<span className="controlLabel">Filter</span>
+									<div className="filterAnchor" ref={filterRef}>
+										<button
+											type="button"
+											className={hasActiveFilter ? "filterTrigger filterTriggerActive" : "filterTrigger"}
+											onClick={() => {
+												setIsFilterOpen((p) => !p);
+												setFilterSearch("");
+											}}
+											aria-haspopup="dialog"
+											aria-expanded={isFilterOpen}
+										>
+											<span className="filterTriggerLabel">{getFilterSummary()}</span>
+											{hasActiveFilter ? (
+												<span
+													className="filterTriggerClear"
+													role="button"
+													tabIndex={0}
+													aria-label="Clear filter"
+													onClick={(e) => {
 														e.stopPropagation();
 														clearFilter();
-													}
-												}}
-											>
-												×
-											</span>
-										) : (
-											<span className="filterTriggerCaret" aria-hidden="true">
-												▾
-											</span>
-										)}
-									</button>
+													}}
+													onKeyDown={(e) => {
+														if (e.key === "Enter") {
+															e.stopPropagation();
+															clearFilter();
+														}
+													}}
+												>
+													×
+												</span>
+											) : (
+												<span className="filterTriggerCaret" aria-hidden="true">
+													▾
+												</span>
+											)}
+										</button>
 
-									{isFilterOpen ? (
-										<div className="filterPopover" role="dialog" aria-label="Filter users">
-											<div className="filterPanels">
-												<div className={isGroupsPanelDimmed ? "filterPanel filterPanelDimmed" : "filterPanel"}>
-													<div className="filterPanelHeader">
-														<span className="filterPanelTitle">Groups</span>
-														<div className="filterPanelActions">
-															{groups.length > 0 ? (
-																<>
-																	<button
-																		type="button"
-																		className="filterPanelAction"
-																		onClick={() => {
-																			setFilterCategory("groups");
-																			setFilterIndividualEmails([]);
-																			setFilterGroupNames(groups.map((g) => g.name));
-																		}}
-																	>
-																		All
-																	</button>
-																	{filterCategory === "groups" && filterGroupNames.length > 0 ? (
+										{isFilterOpen ? (
+											<div className="filterPopover" role="dialog" aria-label="Filter users">
+												<div className="filterPanels">
+													<div className={isGroupsPanelDimmed ? "filterPanel filterPanelDimmed" : "filterPanel"}>
+														<div className="filterPanelHeader">
+															<span className="filterPanelTitle">Groups</span>
+															<div className="filterPanelActions">
+																{groups.length > 0 ? (
+																	<>
 																		<button
 																			type="button"
 																			className="filterPanelAction"
 																			onClick={() => {
-																				setFilterGroupNames([]);
-																				setFilterCategory("all");
+																				setFilterCategory("groups");
+																				setFilterIndividualEmails([]);
+																				setFilterGroupNames(groups.map((g) => g.name));
 																			}}
 																		>
-																			Clear
+																			All
 																		</button>
-																	) : null}
-																</>
-															) : null}
+																		{filterCategory === "groups" && filterGroupNames.length > 0 ? (
+																			<button
+																				type="button"
+																				className="filterPanelAction"
+																				onClick={() => {
+																					setFilterGroupNames([]);
+																					setFilterCategory("all");
+																				}}
+																			>
+																				Clear
+																			</button>
+																		) : null}
+																	</>
+																) : null}
+															</div>
 														</div>
-													</div>
-													<div className="filterPanelList">
-														{groups.length === 0 ? (
-															<p className="filterEmptyMsg">No groups yet. Create them in the Users tab.</p>
-														) : (
-															groups.map((g) => (
-																<label key={g.id} className="filterItem">
-																	<input
-																		type="checkbox"
-																		checked={filterGroupNames.includes(g.name)}
-																		onChange={() => toggleFilterGroup(g.name)}
-																	/>
-																	<span className="filterItemContent">
-																		<span className="filterItemName">{g.name}</span>
-																		<span className="filterItemMeta">{g.userEmails.length} members</span>
-																	</span>
-																</label>
-															))
-														)}
-													</div>
-													{isGroupsPanelDimmed ? (
-														<div className="filterPanelOverlay">
-															<span>Filtering by individuals</span>
+														<div className="filterPanelList">
+															{groups.length === 0 ? (
+																<p className="filterEmptyMsg">No groups yet. Create them in the Users tab.</p>
+															) : (
+																groups.map((g) => (
+																	<label key={g.id} className="filterItem">
+																		<input
+																			type="checkbox"
+																			checked={filterGroupNames.includes(g.name)}
+																			onChange={() => toggleFilterGroup(g.name)}
+																		/>
+																		<span className="filterItemContent">
+																			<span className="filterItemName">{g.name}</span>
+																			<span className="filterItemMeta">{g.userEmails.length} members</span>
+																		</span>
+																	</label>
+																))
+															)}
 														</div>
-													) : null}
-												</div>
+														{isGroupsPanelDimmed ? (
+															<div className="filterPanelOverlay">
+																<span>Filtering by individuals</span>
+															</div>
+														) : null}
+													</div>
 
-												<div className="filterDivider" />
+													<div className="filterDivider" />
 
-												<div className={isIndividualsPanelDimmed ? "filterPanel filterPanelDimmed" : "filterPanel"}>
-													<div className="filterPanelHeader">
-														<span className="filterPanelTitle">Individuals</span>
-														<div className="filterPanelActions">
-															<button
-																type="button"
-																className="filterPanelAction"
-																onClick={() => {
-																	setFilterCategory("individuals");
-																	setFilterGroupNames([]);
-																	setFilterIndividualEmails(filteredPopoverUsers.map((u) => u.email));
-																}}
-															>
-																All
-															</button>
-															{filterCategory === "individuals" && filterIndividualEmails.length > 0 ? (
+													<div className={isIndividualsPanelDimmed ? "filterPanel filterPanelDimmed" : "filterPanel"}>
+														<div className="filterPanelHeader">
+															<span className="filterPanelTitle">Individuals</span>
+															<div className="filterPanelActions">
 																<button
 																	type="button"
 																	className="filterPanelAction"
 																	onClick={() => {
-																		setFilterIndividualEmails([]);
-																		setFilterCategory("all");
+																		setFilterCategory("individuals");
+																		setFilterGroupNames([]);
+																		setFilterIndividualEmails(filteredPopoverUsers.map((u) => u.email));
 																	}}
 																>
-																	Clear
+																	All
 																</button>
-															) : null}
+																{filterCategory === "individuals" && filterIndividualEmails.length > 0 ? (
+																	<button
+																		type="button"
+																		className="filterPanelAction"
+																		onClick={() => {
+																			setFilterIndividualEmails([]);
+																			setFilterCategory("all");
+																		}}
+																	>
+																		Clear
+																	</button>
+																) : null}
+															</div>
 														</div>
-													</div>
-													<div className="filterPanelSearch">
-														<input
-															ref={filterSearchRef}
-															type="text"
-															value={filterSearch}
-															onChange={(e) => setFilterSearch(e.target.value)}
-															placeholder="Search name or email..."
-															className="filterSearchInput"
-														/>
-													</div>
-													<div className="filterPanelList filterPanelListTall">
-														{filteredPopoverUsers.length === 0 ? (
-															<p className="filterEmptyMsg">No matches</p>
-														) : (
-															filteredPopoverUsers.map((u) => (
-																<label key={u.email} className="filterItem">
-																	<input
-																		type="checkbox"
-																		checked={filterIndividualEmails.includes(u.email)}
-																		onChange={() => toggleFilterIndividual(u.email)}
-																	/>
-																	<span className="filterItemContent">
-																		<span className="filterItemName">{u.name}</span>
-																		<span className="filterItemMeta">{u.email}</span>
-																	</span>
-																</label>
-															))
-														)}
-													</div>
-													{isIndividualsPanelDimmed ? (
-														<div className="filterPanelOverlay">
-															<span>Filtering by groups</span>
+														<div className="filterPanelSearch">
+															<input
+																ref={filterSearchRef}
+																type="text"
+																value={filterSearch}
+																onChange={(e) => setFilterSearch(e.target.value)}
+																placeholder="Search name or email..."
+																className="filterSearchInput"
+															/>
 														</div>
-													) : null}
+														<div className="filterPanelList filterPanelListTall">
+															{filteredPopoverUsers.length === 0 ? (
+																<p className="filterEmptyMsg">No matches</p>
+															) : (
+																filteredPopoverUsers.map((u) => (
+																	<label key={u.email} className="filterItem">
+																		<input
+																			type="checkbox"
+																			checked={filterIndividualEmails.includes(u.email)}
+																			onChange={() => toggleFilterIndividual(u.email)}
+																		/>
+																		<span className="filterItemContent">
+																			<span className="filterItemName">{u.name}</span>
+																			<span className="filterItemMeta">{u.email}</span>
+																		</span>
+																	</label>
+																))
+															)}
+														</div>
+														{isIndividualsPanelDimmed ? (
+															<div className="filterPanelOverlay">
+																<span>Filtering by groups</span>
+															</div>
+														) : null}
+													</div>
+												</div>
+
+												<div className="filterPopoverFooter">
+													<span className="muted tiny">{analyticsUserCount} users match</span>
 												</div>
 											</div>
-
-											<div className="filterPopoverFooter">
-												<span className="muted tiny">{analyticsUserCount} users match</span>
-											</div>
-										</div>
-									) : null}
+										) : null}
+									</div>
 								</div>
+								<span className="muted tiny">
+									{data?.selectedWindow ? (
+										<>
+											{data.selectedWindow.label} (
+											{formatDateRange(data.selectedWindow.startDate, data.selectedWindow.endDate)}) ·{" "}
+										</>
+									) : null}
+									{analyticsUserCount} users in view
+									{data?.generatedAt ? (
+										<>
+											{" "}
+											· last updated{" "}
+											{new Date(data.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+										</>
+									) : null}
+								</span>
 							</div>
-							<span className="muted tiny">
-								{data?.selectedWindow ? (
-									<>{data.selectedWindow.label} ({formatDateRange(data.selectedWindow.startDate, data.selectedWindow.endDate)}) · </>
-								) : null}
-								{analyticsUserCount} users in view
-								{data?.generatedAt ? (
-									<>
-										{" "}
-										· last updated{" "}
-										{new Date(data.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-									</>
-								) : null}
-							</span>
-						</div>
 
-						{hasActiveFilter ? (
-							<div className="filterChips">
-								{filterCategory === "groups"
-									? filterGroupNames.map((name) => (
-											<span key={name} className="filterChip filterChipGroup">
-												<span className="filterChipText">{name}</span>
-												<button
-													type="button"
-													className="filterChipRemove"
-													onClick={() => removeFilterChip("group", name)}
-													aria-label={`Remove ${name}`}
-												>
-													×
-												</button>
-											</span>
-										))
-									: null}
-								{filterCategory === "individuals"
-									? filterIndividualEmails.map((email) => {
-											const match = users.find((u) => u.email === email);
-											return (
-												<span key={email} className="filterChip filterChipIndividual">
-													<span className="filterChipText">{match?.name || email}</span>
+							{hasActiveFilter ? (
+								<div className="filterChips">
+									{filterCategory === "groups"
+										? filterGroupNames.map((name) => (
+												<span key={name} className="filterChip filterChipGroup">
+													<span className="filterChipText">{name}</span>
 													<button
 														type="button"
 														className="filterChipRemove"
-														onClick={() => removeFilterChip("individual", email)}
-														aria-label={`Remove ${email}`}
+														onClick={() => removeFilterChip("group", name)}
+														aria-label={`Remove ${name}`}
 													>
 														×
 													</button>
 												</span>
-											);
-										})
-									: null}
-								<button type="button" className="filterChipsClear" onClick={clearFilter}>
-									Clear All
-								</button>
-							</div>
-						) : null}
-
-						<div className="tableWrap">
-							<table>
-								<thead>
-									<tr>
-										<th>User</th>
-										<th>Score</th>
-										<th>Favorite Model</th>
-										<th>Trend</th>
-										<th>Usage</th>
-										<th>Productivity</th>
-										<th>Agent Eff.</th>
-										<th>Tab Eff.</th>
-										<th>Adoption</th>
-									</tr>
-								</thead>
-								<tbody>
-									{effectiveRows.length === 0 ? (
-										<tr>
-											<td colSpan={9} className="muted">
-												No data for the current filter.
-											</td>
-										</tr>
-									) : (
-										effectiveRows.map((row) => (
-											<tr
-												key={`${row.windowId}-${row.userEmail}`}
-												className={`tableRowClickable${drillDownEmail === row.userEmail ? " tableRowActive" : ""}`}
-												onClick={() => {
-													setDrillDownEvents([]);
-													setDrillDownTotal(0);
-													setDrillDownTotalPages(1);
-													setDrillDownError(null);
-													setDrillDownEmail(row.userEmail);
-													setDrillDownPage(1);
-												}}
-											>
-												<td>
-													<div className="userCell">
-														<span>{resolveUserName(row.userName, row.userEmail)}</span>
-														<span className="muted tiny">{row.userEmail}</span>
-													</div>
-												</td>
-												<td>
-													<OverallScorePill
-														row={row}
-														teamMaxUsage={Math.max(...effectiveRows.map((r) => r.usageCount), 1)}
-													/>
-												</td>
-												<td>{row.favoriteModel}</td>
-												<td><Sparkline points={row.dailyTrend} /></td>
-												<td>{row.usageCount}</td>
-												<td>{row.productivityScore}</td>
-												<td>{pct(row.agentEfficiency)}</td>
-												<td>{pct(row.tabEfficiency)}</td>
-												<td>{pct(row.adoptionRate)}</td>
-											</tr>
-										))
-									)}
-								</tbody>
-							</table>
-						</div>
-						<MetricDefinitionsPanel />
-					</>
-				) : null}
-
-				{!loading && !error && activeTab === "users" ? (
-					<section className="usersLayout">
-						<aside className="cardPanel">
-							<div className="panelHeader">
-								<h2>Groups</h2>
-								<button type="button" className="plainButton plainButtonSm" onClick={addGroup}>
-									New Group
-								</button>
-							</div>
-							<div className="groupList">
-								{groups.length === 0 ? <p className="muted">No groups yet.</p> : null}
-								{groups.map((group) => (
-									<div key={group.id} className={activeGroupId === group.id ? "groupItem active" : "groupItem"}>
-										<button type="button" className="groupItemSelect" onClick={() => setActiveGroupId(group.id)}>
-											<span className="groupItemMain">
-												<span className="groupItemTitle">{group.name}</span>
-												<span className="groupItemMeta">{group.userEmails.length} users</span>
-											</span>
-											<span className="groupItemMarker" aria-hidden="true">
-												{activeGroupId === group.id ? "selected" : "open"}
-											</span>
-										</button>
-										{!isSystemGroup(group.id) ? (
-											<button
-												type="button"
-												className="groupDeleteButton"
-												onClick={() => deleteGroup(group.id)}
-												aria-label={`Delete ${group.name}`}
-											>
-												Delete
-											</button>
-										) : null}
-									</div>
-								))}
-							</div>
-							{activeGroup && !isSystemGroup(activeGroup.id) ? (
-								<div className="groupEditor">
-									<div className="groupEditorHeader">
-										<span className="groupEditorTitle">Configure</span>
-									</div>
-									<label htmlFor="groupName" className="groupEditorLabel">
-										Group Name
-									</label>
-									<input id="groupName" value={activeGroup.name} onChange={(e) => renameActiveGroup(e.target.value)} />
-									<label htmlFor="groupBulkEmails" className="groupEditorLabel bulkLabel">
-										Add Users By Email
-									</label>
-									<textarea
-										id="groupBulkEmails"
-										value={bulkEmails}
-										onChange={(e) => setBulkEmails(e.target.value)}
-										placeholder="name1@company.com, name2@company.com"
-										rows={4}
-									/>
-									<div className="groupEditorActions">
-										<button type="button" className="plainButton plainButtonSm" onClick={addEmailsToActiveGroup}>
-											Add
-										</button>
-									</div>
-									{bulkStatus ? <p className="groupStatus">{bulkStatus}</p> : null}
-								</div>
-							) : activeGroup && isSystemGroup(activeGroup.id) ? (
-								<div className="groupEditor">
-									<div className="groupEditorHeader">
-										<span className="groupEditorTitle">{activeGroup.name}</span>
-									</div>
-									<p className="muted tiny">This group is managed automatically and cannot be edited.</p>
+											))
+										: null}
+									{filterCategory === "individuals"
+										? filterIndividualEmails.map((email) => {
+												const match = users.find((u) => u.email === email);
+												return (
+													<span key={email} className="filterChip filterChipIndividual">
+														<span className="filterChipText">{match?.name || email}</span>
+														<button
+															type="button"
+															className="filterChipRemove"
+															onClick={() => removeFilterChip("individual", email)}
+															aria-label={`Remove ${email}`}
+														>
+															×
+														</button>
+													</span>
+												);
+											})
+										: null}
+									<button type="button" className="filterChipsClear" onClick={clearFilter}>
+										Clear All
+									</button>
 								</div>
 							) : null}
-						</aside>
 
-						<section className="cardPanel">
-							<div className="panelHeader">
-								<h2>Team Members</h2>
-								<span className="muted tiny">{users.length} users</span>
-							</div>
 							<div className="tableWrap">
 								<table>
 									<thead>
 										<tr>
 											<th>User</th>
-											<th>Role</th>
-											<th>Group</th>
+											<th>Score</th>
+											<th>Favorite Model</th>
+											<th>Trend</th>
+											<th>Usage</th>
+											<th>Productivity</th>
+											<th>Agent Eff.</th>
+											<th>Tab Eff.</th>
+											<th>Adoption</th>
 										</tr>
 									</thead>
 									<tbody>
-										{users.map((user) => {
-											const assignedGroup = groups.find((g) => g.userEmails.includes(user.email));
-											const customAssignedGroup = assignedGroup && !isSystemGroup(assignedGroup.id) ? assignedGroup : null;
-											return (
-												<tr key={user.email}>
+										{effectiveRows.length === 0 ? (
+											<tr>
+												<td colSpan={9} className="muted">
+													No data for the current filter.
+												</td>
+											</tr>
+										) : (
+											effectiveRows.map((row) => (
+												<tr
+													key={`${row.windowId}-${row.userEmail}`}
+													className={`tableRowClickable${drillDownEmail === row.userEmail ? " tableRowActive" : ""}`}
+													onClick={() => {
+														setDrillDownEvents([]);
+														setDrillDownTotal(0);
+														setDrillDownTotalPages(1);
+														setDrillDownError(null);
+														setDrillDownEmail(row.userEmail);
+														setDrillDownPage(1);
+													}}
+												>
 													<td>
 														<div className="userCell">
-															<span>{user.name}</span>
-															<span className="muted tiny">{user.email}</span>
+															<span>{resolveUserName(row.userName, row.userEmail)}</span>
+															<span className="muted tiny">{row.userEmail}</span>
 														</div>
 													</td>
-													<td>{user.role}</td>
 													<td>
-														<select
-															value={customAssignedGroup?.id || ""}
-															disabled={user.isRemoved}
-															onChange={(e) => {
-																if (e.target.value) assignUserToGroup(user.email, e.target.value);
-																else clearUserGroup(user.email);
-															}}
-														>
-															<option value="">No Group</option>
-															{groups.filter((g) => !isSystemGroup(g.id)).map((g) => (
-																<option key={g.id} value={g.id}>
-																	{g.name}
-																</option>
-															))}
-														</select>
+														<OverallScorePill
+															row={row}
+															teamMaxUsage={Math.max(...effectiveRows.map((r) => r.usageCount), 1)}
+														/>
 													</td>
+													<td>{row.favoriteModel}</td>
+													<td>
+														<Sparkline points={row.dailyTrend} />
+													</td>
+													<td>{row.usageCount}</td>
+													<td>{row.productivityScore}</td>
+													<td>{pct(row.agentEfficiency)}</td>
+													<td>{pct(row.tabEfficiency)}</td>
+													<td>{pct(row.adoptionRate)}</td>
 												</tr>
-											);
-										})}
+											))
+										)}
 									</tbody>
 								</table>
 							</div>
-						</section>
-					</section>
-				) : null}
+							<MetricDefinitionsPanel />
+						</>
+					) : null}
 
-				{!loading && !error && activeTab === "definitions" ? (
-					<section className="defsPage">
-						<div className="defsPageHeader">
-							<h2>Metric Definitions</h2>
-							<p className="muted">What each number on the Analytics tab means, where it comes from, and how to read it.</p>
-						</div>
-						<div className="defsGrid">
-							{definitions.map((def, i) => (
-								<div key={def.name} className="defCard">
-									<div className="defCardLeft">
-										<span className="defCardNum">0{i + 1}</span>
-										<h3 className="defCardTitle">{def.name}</h3>
-										<p className="defCardTagline">{def.tagline}</p>
-									</div>
-									<div className="defCardRight">
-										<div className="defCardRow">
-											<span className="defCardLabel">Formula</span>
-											<span className="defCardFormula">{def.formula}</span>
-										</div>
-										<div className="defCardRow">
-											<span className="defCardLabel">Source</span>
-											<span className="defCardValue">{def.source}</span>
-										</div>
-										<div className="defCardRow">
-											<span className="defCardLabel">How to read</span>
-											<span className="defCardValue">{def.interpret}</span>
-										</div>
-									</div>
+					{!loading && !error && activeTab === "users" ? (
+						<section className="usersLayout">
+							<aside className="cardPanel">
+								<div className="panelHeader">
+									<h2>Groups</h2>
+									<button type="button" className="plainButton plainButtonSm" onClick={addGroup}>
+										New Group
+									</button>
 								</div>
-							))}
-						</div>
-					</section>
-				) : null}
+								<div className="groupList">
+									{groups.length === 0 ? <p className="muted">No groups yet.</p> : null}
+									{groups.map((group) => (
+										<div key={group.id} className={activeGroupId === group.id ? "groupItem active" : "groupItem"}>
+											<button type="button" className="groupItemSelect" onClick={() => setActiveGroupId(group.id)}>
+												<span className="groupItemMain">
+													<span className="groupItemTitle">{group.name}</span>
+													<span className="groupItemMeta">{group.userEmails.length} users</span>
+												</span>
+												<span className="groupItemMarker" aria-hidden="true">
+													{activeGroupId === group.id ? "selected" : "open"}
+												</span>
+											</button>
+											{!isSystemGroup(group.id) ? (
+												<button
+													type="button"
+													className="groupDeleteButton"
+													onClick={() => deleteGroup(group.id)}
+													aria-label={`Delete ${group.name}`}
+												>
+													Delete
+												</button>
+											) : null}
+										</div>
+									))}
+								</div>
+								{activeGroup && !isSystemGroup(activeGroup.id) ? (
+									<div className="groupEditor">
+										<div className="groupEditorHeader">
+											<span className="groupEditorTitle">Configure</span>
+										</div>
+										<label htmlFor="groupName" className="groupEditorLabel">
+											Group Name
+										</label>
+										<input
+											id="groupName"
+											value={activeGroup.name}
+											onChange={(e) => renameActiveGroup(e.target.value)}
+										/>
+										<label htmlFor="groupBulkEmails" className="groupEditorLabel bulkLabel">
+											Add Users By Email
+										</label>
+										<textarea
+											id="groupBulkEmails"
+											value={bulkEmails}
+											onChange={(e) => setBulkEmails(e.target.value)}
+											placeholder="name1@company.com, name2@company.com"
+											rows={4}
+										/>
+										<div className="groupEditorActions">
+											<button type="button" className="plainButton plainButtonSm" onClick={addEmailsToActiveGroup}>
+												Add
+											</button>
+										</div>
+										{bulkStatus ? <p className="groupStatus">{bulkStatus}</p> : null}
+									</div>
+								) : activeGroup && isSystemGroup(activeGroup.id) ? (
+									<div className="groupEditor">
+										<div className="groupEditorHeader">
+											<span className="groupEditorTitle">{activeGroup.name}</span>
+										</div>
+										<p className="muted tiny">This group is managed automatically and cannot be edited.</p>
+									</div>
+								) : null}
+							</aside>
 
-				{activeTab === "audit" ? (
-					<section className="panel">
-						<div className="panelHeader">
-							<h2>Audit Log</h2>
-						</div>
-						<div className="auditPage">
-							<div className="auditControls">
-								<input
-									className="auditSearchInput"
-									type="text"
-									placeholder="Search by user or event…"
-									value={auditSearchInput}
-									onChange={(e) => { setAuditSearchInput(e.target.value); setAuditPage(1); }}
-								/>
-								<input
-									className="auditSearchInput"
-									type="text"
-									placeholder="Event types (comma-separated)"
-									value={auditEventTypes}
-									onChange={(e) => { setAuditEventTypes(e.target.value); setAuditPage(1); }}
-								/>
+							<section className="cardPanel">
+								<div className="panelHeader">
+									<h2>Team Members</h2>
+									<span className="muted tiny">{users.length} users</span>
+								</div>
+								<div className="tableWrap">
+									<table>
+										<thead>
+											<tr>
+												<th>User</th>
+												<th>Role</th>
+												<th>Group</th>
+											</tr>
+										</thead>
+										<tbody>
+											{users.map((user) => {
+												const assignedGroup = groups.find((g) => g.userEmails.includes(user.email));
+												const customAssignedGroup =
+													assignedGroup && !isSystemGroup(assignedGroup.id) ? assignedGroup : null;
+												return (
+													<tr key={user.email}>
+														<td>
+															<div className="userCell">
+																<span>{user.name}</span>
+																<span className="muted tiny">{user.email}</span>
+															</div>
+														</td>
+														<td>{user.role}</td>
+														<td>
+															<select
+																value={customAssignedGroup?.id || ""}
+																disabled={user.isRemoved}
+																onChange={(e) => {
+																	if (e.target.value) assignUserToGroup(user.email, e.target.value);
+																	else clearUserGroup(user.email);
+																}}
+															>
+																<option value="">No Group</option>
+																{groups
+																	.filter((g) => !isSystemGroup(g.id))
+																	.map((g) => (
+																		<option key={g.id} value={g.id}>
+																			{g.name}
+																		</option>
+																	))}
+															</select>
+														</td>
+													</tr>
+												);
+											})}
+										</tbody>
+									</table>
+								</div>
+							</section>
+						</section>
+					) : null}
+
+					{!loading && !error && activeTab === "definitions" ? (
+						<section className="defsPage">
+							<div className="defsPageHeader">
+								<h2>Metric Definitions</h2>
+								<p className="muted">
+									What each number on the Analytics tab means, where it comes from, and how to read it.
+								</p>
 							</div>
-							{auditLoading ? (
-								<p className="muted">Loading audit logs…</p>
-							) : auditError ? (
-								<p className="error">{auditError}</p>
-							) : (
-								<>
+							<div className="defsGrid">
+								{definitions.map((def, i) => (
+									<div key={def.name} className="defCard">
+										<div className="defCardLeft">
+											<span className="defCardNum">0{i + 1}</span>
+											<h3 className="defCardTitle">{def.name}</h3>
+											<p className="defCardTagline">{def.tagline}</p>
+										</div>
+										<div className="defCardRight">
+											<div className="defCardRow">
+												<span className="defCardLabel">Formula</span>
+												<span className="defCardFormula">{def.formula}</span>
+											</div>
+											<div className="defCardRow">
+												<span className="defCardLabel">Source</span>
+												<span className="defCardValue">{def.source}</span>
+											</div>
+											<div className="defCardRow">
+												<span className="defCardLabel">How to read</span>
+												<span className="defCardValue">{def.interpret}</span>
+											</div>
+										</div>
+									</div>
+								))}
+							</div>
+						</section>
+					) : null}
+
+					{activeTab === "audit" ? (
+						<section className="panel">
+							<div className="panelHeader">
+								<h2>Audit Log</h2>
+							</div>
+							<div className="auditPage">
+								<div className="auditControls">
+									<input
+										className="auditSearchInput"
+										type="text"
+										placeholder="Search by user or event…"
+										value={auditSearchInput}
+										onChange={(e) => {
+											setAuditSearchInput(e.target.value);
+											setAuditPage(1);
+										}}
+									/>
+									<input
+										className="auditSearchInput"
+										type="text"
+										placeholder="Event types (comma-separated)"
+										value={auditEventTypes}
+										onChange={(e) => {
+											setAuditEventTypes(e.target.value);
+											setAuditPage(1);
+										}}
+									/>
+								</div>
+								{auditLoading ? (
+									<p className="muted">Loading audit logs…</p>
+								) : auditError ? (
+									<p className="error">{auditError}</p>
+								) : (
+									<>
+										<div className="tableWrap">
+											<table>
+												<thead>
+													<tr>
+														<th>Timestamp</th>
+														<th>User</th>
+														<th>Event Type</th>
+														<th>Details</th>
+													</tr>
+												</thead>
+												<tbody>
+													{auditLogs.length === 0 ? (
+														<tr>
+															<td colSpan={4} className="muted">
+																No audit events found.
+															</td>
+														</tr>
+													) : (
+														auditLogs.map((entry, i) => (
+															<tr key={i}>
+																<td>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "—"}</td>
+																<td>{entry.userEmail || "—"}</td>
+																<td>{entry.eventType || "—"}</td>
+																<td className="auditDetails">
+																	{entry.details ? JSON.stringify(entry.details).slice(0, 80) : "—"}
+																</td>
+															</tr>
+														))
+													)}
+												</tbody>
+											</table>
+										</div>
+										<div className="auditFooter">
+											<span className="muted tiny">Total: {auditTotal} events</span>
+											<div className="paginationControls">
+												<button
+													type="button"
+													className="plainButton plainButtonSm"
+													disabled={auditPage <= 1}
+													onClick={() => setAuditPage((p) => p - 1)}
+												>
+													← Prev
+												</button>
+												<span className="muted tiny">
+													Page {auditPage} / {auditTotalPages}
+												</span>
+												<button
+													type="button"
+													className="plainButton plainButtonSm"
+													disabled={auditPage >= auditTotalPages}
+													onClick={() => setAuditPage((p) => p + 1)}
+												>
+													Next →
+												</button>
+											</div>
+										</div>
+									</>
+								)}
+							</div>
+						</section>
+					) : null}
+
+					{activeTab === "security" ? (
+						<section className="panel">
+							<div className="panelHeader">
+								<h2>Repo Blocklist</h2>
+							</div>
+							<div className="securityPage">
+								<p className="muted">
+									Repositories blocked from Cursor AI features. Add a URL and optional file-path patterns.
+								</p>
+								{securityMutateError ? <p className="error">{securityMutateError}</p> : null}
+								<div className="securityAddRow">
+									<input
+										className="auditSearchInput"
+										type="text"
+										placeholder="Repository URL (e.g. github.com/org/repo)"
+										value={newRepoUrl}
+										onChange={(e) => setNewRepoUrl(e.target.value)}
+									/>
+									<input
+										className="auditSearchInput"
+										type="text"
+										placeholder="Patterns, comma-separated (optional)"
+										value={newRepoPatterns}
+										onChange={(e) => setNewRepoPatterns(e.target.value)}
+									/>
+									<button
+										type="button"
+										className="plainButton plainButtonSm"
+										disabled={securityMutating || !newRepoUrl.trim()}
+										onClick={addRepo}
+									>
+										{securityMutating ? "Adding…" : "Add"}
+									</button>
+								</div>
+								{securityLoading ? (
+									<p className="muted">Loading…</p>
+								) : securityError ? (
+									<p className="error">{securityError}</p>
+								) : (
 									<div className="tableWrap">
 										<table>
 											<thead>
 												<tr>
-													<th>Timestamp</th>
-													<th>User</th>
-													<th>Event Type</th>
-													<th>Details</th>
+													<th>Repository URL</th>
+													<th>Patterns</th>
+													<th></th>
 												</tr>
 											</thead>
 											<tbody>
-												{auditLogs.length === 0 ? (
+												{repoBlocklists.length === 0 ? (
 													<tr>
-														<td colSpan={4} className="muted">No audit events found.</td>
+														<td colSpan={3} className="muted">
+															No repos blocked.
+														</td>
 													</tr>
 												) : (
-													auditLogs.map((entry, i) => (
-														<tr key={i}>
-															<td>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "—"}</td>
-															<td>{entry.userEmail || "—"}</td>
-															<td>{entry.eventType || "—"}</td>
-															<td className="auditDetails">{entry.details ? JSON.stringify(entry.details).slice(0, 80) : "—"}</td>
+													repoBlocklists.map((repo) => (
+														<tr key={repo.id}>
+															<td>{repo.url}</td>
+															<td>
+																<span className="patternsList">
+																	{repo.patterns.length > 0 ? (
+																		repo.patterns.join(", ")
+																	) : (
+																		<span className="muted">—</span>
+																	)}
+																</span>
+															</td>
+															<td>
+																<button
+																	type="button"
+																	className="plainButton plainButtonSm deleteButton"
+																	disabled={securityMutating}
+																	onClick={() => deleteRepo(repo.id)}
+																>
+																	Delete
+																</button>
+															</td>
 														</tr>
 													))
 												)}
 											</tbody>
 										</table>
 									</div>
-									<div className="auditFooter">
-										<span className="muted tiny">Total: {auditTotal} events</span>
+								)}
+							</div>
+						</section>
+					) : null}
+
+					{drillDownEmail !== null ? (
+						<div className="drillDownOverlay" onClick={() => setDrillDownEmail(null)}>
+							<aside className="drillDownPanel" onClick={(e) => e.stopPropagation()}>
+								<div className="drillDownHeader">
+									<div>
+										<strong>Usage Events</strong>
+										<p className="muted tiny">{drillDownEmail}</p>
+										{data?.selectedWindow ? (
+											<p className="muted tiny">
+												{data.selectedWindow.label} (
+												{formatDateRange(data.selectedWindow.startDate, data.selectedWindow.endDate)})
+											</p>
+										) : null}
+									</div>
+									<button
+										type="button"
+										className="plainButton plainButtonSm drillDownClose"
+										aria-label="Close"
+										onClick={() => setDrillDownEmail(null)}
+									>
+										×
+									</button>
+								</div>
+								{drillDownLoading ? (
+									<p className="muted" style={{ padding: "16px" }}>
+										Loading…
+									</p>
+								) : drillDownError ? (
+									<p className="error" style={{ padding: "16px" }}>
+										{drillDownError}
+									</p>
+								) : (
+									<div className="tableWrap" style={{ flex: 1 }}>
+										<table>
+											<thead>
+												<tr>
+													<th>Timestamp</th>
+													<th>Model</th>
+													<th>Kind</th>
+													<th>Max Mode</th>
+													<th>Charged (¢)</th>
+												</tr>
+											</thead>
+											<tbody>
+												{drillDownEvents.length === 0 ? (
+													<tr>
+														<td colSpan={5} className="muted">
+															No events found.
+														</td>
+													</tr>
+												) : (
+													drillDownEvents.map((evt, i) => (
+														<tr key={i}>
+															<td>{evt.timestamp ? new Date(Number(evt.timestamp)).toLocaleString() : "—"}</td>
+															<td>{evt.model || "—"}</td>
+															<td>{evt.kind || "—"}</td>
+															<td>{evt.maxMode ? "Yes" : "No"}</td>
+															<td>{evt.chargedCents ?? "—"}</td>
+														</tr>
+													))
+												)}
+											</tbody>
+										</table>
+									</div>
+								)}
+								{drillDownEmail && <UserQuotaSection email={drillDownEmail} windowId={windowId} quotaCap={quotaCap} />}
+								{!drillDownLoading && !drillDownError ? (
+									<div className="drillDownFooter">
+										<span className="muted tiny">Total: {drillDownTotal} events</span>
 										<div className="paginationControls">
 											<button
 												type="button"
 												className="plainButton plainButtonSm"
-												disabled={auditPage <= 1}
-												onClick={() => setAuditPage((p) => p - 1)}
+												disabled={drillDownPage <= 1}
+												onClick={() => setDrillDownPage((p) => p - 1)}
 											>
 												← Prev
 											</button>
-											<span className="muted tiny">Page {auditPage} / {auditTotalPages}</span>
+											<span className="muted tiny">
+												Page {drillDownPage} / {drillDownTotalPages}
+											</span>
 											<button
 												type="button"
 												className="plainButton plainButtonSm"
-												disabled={auditPage >= auditTotalPages}
-												onClick={() => setAuditPage((p) => p + 1)}
+												disabled={drillDownPage >= drillDownTotalPages}
+												onClick={() => setDrillDownPage((p) => p + 1)}
 											>
 												Next →
 											</button>
 										</div>
 									</div>
-								</>
-							)}
+								) : null}
+							</aside>
 						</div>
-					</section>
-				) : null}
-
-				{activeTab === "security" ? (
-					<section className="panel">
-						<div className="panelHeader">
-							<h2>Repo Blocklist</h2>
-						</div>
-						<div className="securityPage">
-							<p className="muted">Repositories blocked from Cursor AI features. Add a URL and optional file-path patterns.</p>
-							{securityMutateError ? <p className="error">{securityMutateError}</p> : null}
-							<div className="securityAddRow">
-								<input
-									className="auditSearchInput"
-									type="text"
-									placeholder="Repository URL (e.g. github.com/org/repo)"
-									value={newRepoUrl}
-									onChange={(e) => setNewRepoUrl(e.target.value)}
-								/>
-								<input
-									className="auditSearchInput"
-									type="text"
-									placeholder="Patterns, comma-separated (optional)"
-									value={newRepoPatterns}
-									onChange={(e) => setNewRepoPatterns(e.target.value)}
-								/>
-								<button
-									type="button"
-									className="plainButton plainButtonSm"
-									disabled={securityMutating || !newRepoUrl.trim()}
-									onClick={addRepo}
-								>
-									{securityMutating ? "Adding…" : "Add"}
-								</button>
-							</div>
-							{securityLoading ? (
-								<p className="muted">Loading…</p>
-							) : securityError ? (
-								<p className="error">{securityError}</p>
-							) : (
-								<div className="tableWrap">
-									<table>
-										<thead>
-											<tr>
-												<th>Repository URL</th>
-												<th>Patterns</th>
-												<th></th>
-											</tr>
-										</thead>
-										<tbody>
-											{repoBlocklists.length === 0 ? (
-												<tr>
-													<td colSpan={3} className="muted">No repos blocked.</td>
-												</tr>
-											) : (
-												repoBlocklists.map((repo) => (
-													<tr key={repo.id}>
-														<td>{repo.url}</td>
-														<td>
-															<span className="patternsList">
-																{repo.patterns.length > 0 ? repo.patterns.join(", ") : <span className="muted">—</span>}
-															</span>
-														</td>
-														<td>
-															<button
-																type="button"
-																className="plainButton plainButtonSm deleteButton"
-																disabled={securityMutating}
-																onClick={() => deleteRepo(repo.id)}
-															>
-																Delete
-															</button>
-														</td>
-													</tr>
-												))
-											)}
-										</tbody>
-									</table>
-								</div>
-							)}
-						</div>
-					</section>
-				) : null}
-
-				{drillDownEmail !== null ? (
-					<div
-						className="drillDownOverlay"
-						onClick={() => setDrillDownEmail(null)}
-					>
-						<aside className="drillDownPanel" onClick={(e) => e.stopPropagation()}>
-							<div className="drillDownHeader">
-								<div>
-									<strong>Usage Events</strong>
-									<p className="muted tiny">{drillDownEmail}</p>
-									{data?.selectedWindow ? (
-										<p className="muted tiny">
-											{data.selectedWindow.label} (
-											{formatDateRange(
-												data.selectedWindow.startDate,
-												data.selectedWindow.endDate
-											)}
-											)
-										</p>
-									) : null}
-								</div>
-								<button
-									type="button"
-									className="plainButton plainButtonSm drillDownClose"
-									aria-label="Close"
-									onClick={() => setDrillDownEmail(null)}
-								>
-									×
-								</button>
-							</div>
-							{drillDownLoading ? (
-								<p className="muted" style={{ padding: "16px" }}>Loading…</p>
-							) : drillDownError ? (
-								<p className="error" style={{ padding: "16px" }}>{drillDownError}</p>
-							) : (
-								<div className="tableWrap" style={{ flex: 1 }}>
-									<table>
-										<thead>
-											<tr>
-												<th>Timestamp</th>
-												<th>Model</th>
-												<th>Kind</th>
-												<th>Max Mode</th>
-												<th>Charged (¢)</th>
-											</tr>
-										</thead>
-										<tbody>
-											{drillDownEvents.length === 0 ? (
-												<tr>
-													<td colSpan={5} className="muted">No events found.</td>
-												</tr>
-											) : (
-												drillDownEvents.map((evt, i) => (
-													<tr key={i}>
-														<td>{evt.timestamp ? new Date(Number(evt.timestamp)).toLocaleString() : "—"}</td>
-														<td>{evt.model || "—"}</td>
-														<td>{evt.kind || "—"}</td>
-														<td>{evt.maxMode ? "Yes" : "No"}</td>
-														<td>{evt.chargedCents ?? "—"}</td>
-													</tr>
-												))
-											)}
-										</tbody>
-									</table>
-								</div>
-							)}
-							{drillDownEmail && (
-								<UserQuotaSection
-									email={drillDownEmail}
-									windowId={windowId}
-									quotaCap={quotaCap}
-								/>
-							)}
-							{!drillDownLoading && !drillDownError ? (
-								<div className="drillDownFooter">
-									<span className="muted tiny">Total: {drillDownTotal} events</span>
-									<div className="paginationControls">
-										<button
-											type="button"
-											className="plainButton plainButtonSm"
-											disabled={drillDownPage <= 1}
-											onClick={() => setDrillDownPage((p) => p - 1)}
-										>
-											← Prev
-										</button>
-										<span className="muted tiny">
-											Page {drillDownPage} / {drillDownTotalPages}
-										</span>
-										<button
-											type="button"
-											className="plainButton plainButtonSm"
-											disabled={drillDownPage >= drillDownTotalPages}
-											onClick={() => setDrillDownPage((p) => p + 1)}
-										>
-											Next →
-										</button>
-									</div>
-								</div>
-							) : null}
-						</aside>
-					</div>
-				) : null}
-			</div>
+					) : null}
+				</div>
 			</main>
 		</div>
 	);

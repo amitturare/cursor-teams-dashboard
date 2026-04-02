@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { syncAndQueryUsageEvents } from "@/lib/sync/usage-events";
+import { syncAndQueryUsageEventsQueued } from "@/lib/sync/usage-events";
 import type { UsageEvent } from "@/lib/cursor-admin";
+import { msWindowToInclusiveUtcDateStrings } from "@/lib/window-sql-dates";
 
 export const dynamic = "force-dynamic";
 
@@ -23,9 +24,11 @@ export async function GET(request: NextRequest) {
       pageSize: request.nextUrl.searchParams.get("pageSize") || undefined
     });
 
-    const startDateStr = new Date(query.startDate).toISOString().slice(0, 10);
-    const endDateStr = new Date(query.endDate).toISOString().slice(0, 10);
-    const allEvents: UsageEvent[] = await syncAndQueryUsageEvents(startDateStr, endDateStr, query.email);
+    const { start: startDateStr, end: endDateStr } = msWindowToInclusiveUtcDateStrings(
+      query.startDate,
+      query.endDate
+    );
+    const allEvents: UsageEvent[] = await syncAndQueryUsageEventsQueued(startDateStr, endDateStr, query.email);
 
     const total = allEvents.length;
     const start = (query.page - 1) * query.pageSize;

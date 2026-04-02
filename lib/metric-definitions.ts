@@ -85,13 +85,15 @@ export const METRIC_DEFINITIONS: MetricDefinition[] = [
   },
   {
     name: "Quota Utilisation",
-    unit: "requests / day",
-    tagline: "Daily consumption of subscription-included requests vs. the configured monthly quota cap",
-    formula: "Sum of subscriptionIncludedReqs across all team members per calendar day",
-    source: "subscriptionIncludedReqs from /teams/daily-usage-data",
+    unit: "requests (billing cycle)",
+    tagline:
+      "Per-member `fastPremiumRequests` from team spend vs. your cap reference setting (anomaly coloring only)",
+    formula:
+      "POST /teams/spend — `fastPremiumRequests` per member; top 10 by count (visible cohort). Red highlight if count > 50% of team `quota_cap` and today (UTC) is in the first 10 calendar days after `subscriptionCycleStart`",
+    source: "`fastPremiumRequests` on each `teamMemberSpend` row from POST /teams/spend (synced via GET /api/spend)",
     interpret:
-      "Weekday bars (violet) show normal working usage. Weekend bars (grey) should be low. Bars exceeding 30% of monthly quota on a single day are flagged red as anomalies.",
+      "Taller violet bars = more usage-based premium requests this billing cycle for that person. Red only if usage exceeds 50% of your cap reference (team setting) while the current date (UTC) is within the first 10 calendar days of that billing cycle.",
     warning:
-      "subscriptionIncludedReqs counts raw usage events, NOT billable request units. Do not use for cost calculations. For accurate billing data, use /teams/filtered-usage-events and sum chargedCents."
+      "Cap reference is a team setting for visualization only, not Cursor’s official plan ceiling. Billing cycle start comes from spend (`subscriptionCycleStart`)."
   }
 ];

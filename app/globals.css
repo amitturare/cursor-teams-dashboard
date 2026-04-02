@@ -1323,6 +1323,41 @@ tr:last-child td {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-bottom: 10px;
+  align-items: stretch;
+}
+
+.widgetRowFixed > .widgetPanel {
+  height: 100%;
+}
+
+/* Quota chart: ensure a usable minimum plot height when the row is short */
+.widgetPanel.quotaChartPanel {
+  min-height: 300px;
+}
+
+.widgetPanel.aiCommittedChartPanel {
+  min-height: 300px;
+}
+
+/* Invisible band: matches .billingCycleSubtitle block so plot aligns with Quota card */
+.aiCommittedChartHeaderSpacer {
+  margin-top: 4px;
+  min-height: 1.35em;
+  font-size: 10px;
+  line-height: 1.35;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+/* Shared spend-cycle hint under chart titles (light weight + muted) */
+.billingCycleSubtitle {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.35;
+  font-weight: 300;
+  letter-spacing: 0.01em;
+  opacity: 0.88;
 }
 
 .widgetRowChangeable {
@@ -1544,6 +1579,17 @@ tr:last-child td {
 .widgetBarLabelSelected {
   color: var(--text);
   font-weight: 600;
+}
+
+/* Same typography as .widgetBarLabel (quartile “0-25%” etc.), left-aligned */
+.quotaChartAxisCaption {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: left;
+  user-select: none;
+  flex-shrink: 0;
+  margin-top: 2px;
+  line-height: 1.2;
 }
 
 /* Coditas Theme Overrides */

@@ -5,6 +5,8 @@ const MAX_DAILY_RANGE_DAYS = 30;
 const MAX_USAGE_EVENTS_RANGE_DAYS = 30;
 const MAX_RETRIES = 5;
 const BASE_RETRY_DELAY_MS = 1200;
+/** Stay under Cursor's ~20 req/min per team on POST /teams/filtered-usage-events (space between paginated calls). */
+export const FILTERED_USAGE_EVENTS_MIN_GAP_MS = 3100;
 
 export interface TeamMember {
   id: number | string;
@@ -181,7 +183,7 @@ type JsonRequestOptions = Omit<RequestInit, "headers" | "body"> & {
 
 type CursorResponse<T> = { data: T; etag?: string };
 
-function sleep(ms: number) {
+export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -390,7 +392,8 @@ export async function getUsageEvents(
   const allEvents: UsageEvent[] = [];
   const seen = new Set<string>();
 
-  for (const range of ranges) {
+  for (let rangeIndex = 0; rangeIndex < ranges.length; rangeIndex += 1) {
+    const range = ranges[rangeIndex];
     let page = 1;
     let hasNextPage = true;
 
@@ -442,6 +445,12 @@ export async function getUsageEvents(
       if (page > 1000) {
         throw new Error("Aborting usage event pagination at 1000 pages per chunk. Narrow date range.");
       }
+      if (hasNextPage) {
+        await sleep(FILTERED_USAGE_EVENTS_MIN_GAP_MS);
+      }
+    }
+    if (rangeIndex < ranges.length - 1) {
+      await sleep(FILTERED_USAGE_EVENTS_MIN_GAP_MS);
     }
   }
 

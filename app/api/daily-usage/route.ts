@@ -18,8 +18,10 @@ export async function GET(request: NextRequest) {
     });
 
     const selectedWindow = resolveWindowSelection(query.window);
+    const oneDayMs = 24 * 60 * 60 * 1000;
     const startDateStr = new Date(selectedWindow.startDate).toISOString().slice(0, 10);
-    const endDateStr = new Date(selectedWindow.endDate).toISOString().slice(0, 10);
+    const inclusiveEndMs = selectedWindow.endDate - oneDayMs;
+    const endDateStr = new Date(inclusiveEndMs).toISOString().slice(0, 10);
     const allRows = await queryDailyUsageRows(startDateStr, endDateStr);
 
     const rows = query.email

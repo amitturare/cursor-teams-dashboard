@@ -84,6 +84,23 @@ function n(value: number | undefined | null): number {
   return value ?? 0;
 }
 
+function finiteOrZero(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function compareUserWindowMetricRows(a: UserWindowMetricRow, b: UserWindowMetricRow): number {
+  const scoreA = finiteOrZero(a.overallScore);
+  const scoreB = finiteOrZero(b.overallScore);
+  if (scoreB !== scoreA) {
+    return scoreB > scoreA ? 1 : -1;
+  }
+  const byEmail = a.userEmail.localeCompare(b.userEmail);
+  if (byEmail !== 0) {
+    return byEmail;
+  }
+  return a.userName.localeCompare(b.userName);
+}
+
 function pickFavoriteModel(modelCounts: Map<string, number>) {
   let bestModel = "-";
   let bestCount = -1;
@@ -305,32 +322,39 @@ export function buildUserWindowMetrics(params: {
       isRemoved: item.isRemoved,
       favoriteModel: pickFavoriteModel(item.modelCounts),
       usageCount: totalAiRequests,
-      productivityScore: Number((acceptedLines / Math.max(totalAiRequests, 1)).toFixed(2)),
-      agentEfficiency: Number((item.totalAccepts / Math.max(item.agentRequests, 1)).toFixed(2)),
-      tabEfficiency: Number((item.totalTabsAccepted / Math.max(item.totalTabsShown, 1)).toFixed(2)),
-      adoptionRate: Number((item.activeDays.size / Math.max(params.window.totalDays, 1)).toFixed(2)),
+      productivityScore: finiteOrZero(Number((acceptedLines / Math.max(totalAiRequests, 1)).toFixed(2))),
+      agentEfficiency: finiteOrZero(Number((item.totalAccepts / Math.max(item.agentRequests, 1)).toFixed(2))),
+      tabEfficiency: finiteOrZero(Number((item.totalTabsAccepted / Math.max(item.totalTabsShown, 1)).toFixed(2))),
+      adoptionRate: finiteOrZero(Number((item.activeDays.size / Math.max(params.window.totalDays, 1)).toFixed(2))),
       dailyTrend: buildDailyTrend(item.dailyData, params.window.startDate, params.window.endDate)
     };
   });
 
   // Second pass: compute overallScore (needs team max usage for normalization)
-  const maxUsage = Math.max(...rows.map((r) => r.usageCount), 1);
+  let maxUsage = 1;
+  for (const row of rows) {
+    if (row.usageCount > maxUsage) {
+      maxUsage = row.usageCount;
+    }
+  }
 
   return rows
     .map((row): UserWindowMetricRow => {
       const usageNorm = row.usageCount / maxUsage;
       const productivityNorm = Math.min(row.productivityScore / 100, 1);
-      const overallScore = Number(
-        (
-          (row.adoptionRate * 0.30 +
-            row.tabEfficiency * 0.20 +
-            row.agentEfficiency * 0.20 +
-            productivityNorm * 0.20 +
-            usageNorm * 0.10) *
-          100
-        ).toFixed(1)
+      const overallScore = finiteOrZero(
+        Number(
+          (
+            (row.adoptionRate * 0.30 +
+              row.tabEfficiency * 0.20 +
+              row.agentEfficiency * 0.20 +
+              productivityNorm * 0.20 +
+              usageNorm * 0.10) *
+            100
+          ).toFixed(1)
+        )
       );
       return { ...row, overallScore };
     })
-    .sort((a, b) => b.overallScore - a.overallScore);
+    .sort(compareUserWindowMetricRows);
 }

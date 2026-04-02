@@ -62,10 +62,11 @@ export function groupIntoRanges(dates: string[]): Array<{ start: string; end: st
   let rangeStart = sorted[0];
   let prev = sorted[0];
 
+  const utcDay = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`).getTime();
   for (let i = 1; i < sorted.length; i++) {
     const curr = sorted[i];
-    const prevMs = new Date(prev).getTime();
-    const currMs = new Date(curr).getTime();
+    const prevMs = utcDay(prev);
+    const currMs = utcDay(curr);
     if (currMs - prevMs > 24 * 60 * 60 * 1000) {
       ranges.push({ start: rangeStart, end: prev });
       rangeStart = curr;
@@ -78,8 +79,12 @@ export function groupIntoRanges(dates: string[]): Array<{ start: string; end: st
 
 function getDatesInRange(startDate: string, endDate: string): string[] {
   const dates: string[] = [];
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  const toUtcMidnight = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
+  const start = toUtcMidnight(startDate);
+  const end = toUtcMidnight(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new RangeError("Invalid time value");
+  }
   const curr = new Date(start);
   while (curr <= end) {
     dates.push(curr.toISOString().slice(0, 10));

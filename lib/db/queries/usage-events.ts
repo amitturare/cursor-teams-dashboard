@@ -8,7 +8,10 @@ export async function upsertUsageEvents(events: UsageEvent[]): Promise<void> {
   const now = new Date();
 
   const values = events
-    .filter((e) => e.timestamp && e.userEmail)
+    .filter((e) => {
+      if (!e.timestamp || !e.userEmail) return false;
+      return Number.isFinite(new Date(e.timestamp as string | number).getTime());
+    })
     .map((e) => ({
       userEmail: e.userEmail!,
       timestamp: new Date(e.timestamp as string | number),
@@ -31,9 +34,11 @@ export async function queryUsageEvents(
   endDate: string,
   email?: string
 ): Promise<UsageEvent[]> {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  end.setUTCHours(23, 59, 59, 999);
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T23:59:59.999Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new RangeError("Invalid time value");
+  }
 
   const conditions = [gte(usageEvents.timestamp, start), lte(usageEvents.timestamp, end)];
   if (email) {
@@ -45,11 +50,13 @@ export async function queryUsageEvents(
     .from(usageEvents)
     .where(and(...conditions));
 
-  return rows.map((r) => ({
-    ...(r.data as object),
-    timestamp: r.timestamp.toISOString(),
-    userEmail: r.userEmail,
-    model: r.model ?? undefined,
-    kind: r.kind ?? undefined
-  })) as UsageEvent[];
+  return rows
+    .filter((r) => Number.isFinite(r.timestamp.getTime()))
+    .map((r) => ({
+      ...(r.data as object),
+      timestamp: r.timestamp.toISOString(),
+      userEmail: r.userEmail,
+      model: r.model ?? undefined,
+      kind: r.kind ?? undefined
+    })) as UsageEvent[];
 }
