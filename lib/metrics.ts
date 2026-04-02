@@ -12,6 +12,8 @@ export interface DailyTrendPoint {
   date: string;
   usageCount: number;
   isActive: boolean;
+  acceptedLines: number; // acceptedLinesAdded + acceptedLinesDeleted for that day
+  prompts: number;       // agentRequests + composerRequests + chatRequests + cmdkUsages for that day
 }
 
 export interface UserWindowMetricRow {
@@ -27,6 +29,7 @@ export interface UserWindowMetricRow {
   agentEfficiency: number;
   tabEfficiency: number;
   adoptionRate: number;
+  overallScore: number; // composite score 0–100
   dailyTrend: DailyTrendPoint[];
 }
 
@@ -48,7 +51,7 @@ interface Accumulator {
   chatRequests: number;
   acceptedLinesAdded: number;
   acceptedLinesDeleted: number;
-  dailyData: Map<string, { usageCount: number; isActive: boolean }>;
+  dailyData: Map<string, { usageCount: number; isActive: boolean; acceptedLines: number; prompts: number }>;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -128,7 +131,7 @@ function getOrCreate(
     chatRequests: 0,
     acceptedLinesAdded: 0,
     acceptedLinesDeleted: 0,
-    dailyData: new Map<string, { usageCount: number; isActive: boolean }>()
+    dailyData: new Map<string, { usageCount: number; isActive: boolean; acceptedLines: number; prompts: number }>()
   };
 
   map.set(key, next);
@@ -196,7 +199,7 @@ export function resolveWindowSelection(windowId: string | undefined) {
 }
 
 function buildDailyTrend(
-  dailyData: Map<string, { usageCount: number; isActive: boolean }>,
+  dailyData: Map<string, { usageCount: number; isActive: boolean; acceptedLines: number; prompts: number }>,
   startDate: number,
   endDate: number
 ): DailyTrendPoint[] {
@@ -206,7 +209,13 @@ function buildDailyTrend(
   while (cursor < endDate) {
     const dk = dayKey(cursor);
     const entry = dailyData.get(dk);
-    points.push({ date: dk, usageCount: entry?.usageCount ?? 0, isActive: entry?.isActive ?? false });
+    points.push({
+      date: dk,
+      usageCount: entry?.usageCount ?? 0,
+      isActive: entry?.isActive ?? false,
+      acceptedLines: entry?.acceptedLines ?? 0,
+      prompts: entry?.prompts ?? 0
+    });
     cursor += oneDayMs;
   }
   return points;
@@ -272,33 +281,56 @@ export function buildUserWindowMetrics(params: {
 
     const dk = dayKey(row.date);
     const dayUsage = n(row.agentRequests) + n(row.composerRequests) + n(row.chatRequests) + n(row.cmdkUsages);
+    const dayAccepted = n(row.acceptedLinesAdded) + n(row.acceptedLinesDeleted);
     const prevDay = target.dailyData.get(dk);
     target.dailyData.set(dk, {
       usageCount: (prevDay?.usageCount ?? 0) + dayUsage,
-      isActive: (prevDay?.isActive ?? false) || Boolean(row.isActive)
+      isActive: (prevDay?.isActive ?? false) || Boolean(row.isActive),
+      acceptedLines: (prevDay?.acceptedLines ?? 0) + dayAccepted,
+      prompts: (prevDay?.prompts ?? 0) + dayUsage
     });
   }
 
-  return Array.from(acc.values())
-    .map((item): UserWindowMetricRow => {
-      const totalAiRequests = item.agentRequests + item.composerRequests + item.chatRequests + item.cmdkRequests;
-      const acceptedLines = item.acceptedLinesAdded + item.acceptedLinesDeleted;
+  // First pass: build rows without overallScore
+  const rows = Array.from(acc.values()).map((item): Omit<UserWindowMetricRow, "overallScore"> => {
+    const totalAiRequests = item.agentRequests + item.composerRequests + item.chatRequests + item.cmdkRequests;
+    const acceptedLines = item.acceptedLinesAdded + item.acceptedLinesDeleted;
 
-      return {
-        windowId: item.windowId,
-        windowLabel: item.windowLabel,
-        userEmail: item.userEmail,
-        userName: item.userName,
-        role: item.role,
-        isRemoved: item.isRemoved,
-        favoriteModel: pickFavoriteModel(item.modelCounts),
-        usageCount: totalAiRequests,
-        productivityScore: Number((acceptedLines / Math.max(totalAiRequests, 1)).toFixed(2)),
-        agentEfficiency: Number((item.totalAccepts / Math.max(item.agentRequests, 1)).toFixed(2)),
-        tabEfficiency: Number((item.totalTabsAccepted / Math.max(item.totalTabsShown, 1)).toFixed(2)),
-        adoptionRate: Number((item.activeDays.size / Math.max(params.window.totalDays, 1)).toFixed(2)),
-        dailyTrend: buildDailyTrend(item.dailyData, params.window.startDate, params.window.endDate)
-      };
+    return {
+      windowId: item.windowId,
+      windowLabel: item.windowLabel,
+      userEmail: item.userEmail,
+      userName: item.userName,
+      role: item.role,
+      isRemoved: item.isRemoved,
+      favoriteModel: pickFavoriteModel(item.modelCounts),
+      usageCount: totalAiRequests,
+      productivityScore: Number((acceptedLines / Math.max(totalAiRequests, 1)).toFixed(2)),
+      agentEfficiency: Number((item.totalAccepts / Math.max(item.agentRequests, 1)).toFixed(2)),
+      tabEfficiency: Number((item.totalTabsAccepted / Math.max(item.totalTabsShown, 1)).toFixed(2)),
+      adoptionRate: Number((item.activeDays.size / Math.max(params.window.totalDays, 1)).toFixed(2)),
+      dailyTrend: buildDailyTrend(item.dailyData, params.window.startDate, params.window.endDate)
+    };
+  });
+
+  // Second pass: compute overallScore (needs team max usage for normalization)
+  const maxUsage = Math.max(...rows.map((r) => r.usageCount), 1);
+
+  return rows
+    .map((row): UserWindowMetricRow => {
+      const usageNorm = row.usageCount / maxUsage;
+      const productivityNorm = Math.min(row.productivityScore / 100, 1);
+      const overallScore = Number(
+        (
+          (row.adoptionRate * 0.30 +
+            row.tabEfficiency * 0.20 +
+            row.agentEfficiency * 0.20 +
+            productivityNorm * 0.20 +
+            usageNorm * 0.10) *
+          100
+        ).toFixed(1)
+      );
+      return { ...row, overallScore };
     })
-    .sort((a, b) => a.userEmail.localeCompare(b.userEmail));
+    .sort((a, b) => b.overallScore - a.overallScore);
 }
