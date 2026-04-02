@@ -88,6 +88,12 @@ export const syncLog = pgTable(
   (t) => [unique().on(t.dataType, t.date)]
 );
 
+export const teamSettings = pgTable("team_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+});
+
 export const userGroups = pgTable("user_groups", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
