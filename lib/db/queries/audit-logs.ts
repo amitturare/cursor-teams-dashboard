@@ -1,4 +1,4 @@
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../index";
 import { auditLogs } from "../schema";
 import type { AuditLogEntry } from "../../cursor-admin";
@@ -20,6 +20,17 @@ export async function upsertAuditLogs(logs: AuditLogEntry[]): Promise<void> {
   if (values.length === 0) return;
 
   await db.insert(auditLogs).values(values).onConflictDoNothing();
+}
+
+/** Returns the distinct YYYY-MM-DD dates (UTC) that have at least one audit log in the given range. */
+export async function getCoveredDates(startDate: string, endDate: string): Promise<Set<string>> {
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T23:59:59.999Z`);
+  const rows = await db
+    .selectDistinct({ date: sql<string>`to_char(${auditLogs.timestamp} AT TIME ZONE 'UTC', 'YYYY-MM-DD')` })
+    .from(auditLogs)
+    .where(and(gte(auditLogs.timestamp, start), lte(auditLogs.timestamp, end)));
+  return new Set(rows.map((r) => r.date));
 }
 
 export async function queryAuditLogs(

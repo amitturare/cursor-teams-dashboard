@@ -12,5 +12,15 @@ export async function syncAndQuerySpend() {
     await markSynced("team_spend", staleDates);
   }
 
-  return queryTeamSpend();
+  const result = await queryTeamSpend();
+
+  // Sync log was fresh but DB has no spend rows — force a re-fetch.
+  if (result.length === 0 && staleDates.length === 0) {
+    const { entries, billingCycleStart } = await getTeamSpend();
+    await upsertTeamSpend(entries, billingCycleStart);
+    await markSynced("team_spend", [today]);
+    return queryTeamSpend();
+  }
+
+  return result;
 }

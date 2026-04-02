@@ -294,7 +294,7 @@ function Sparkline({
 	);
 }
 
-function UserQuotaSection({ email, windowId, quotaCap }: { email: string; windowId: string; quotaCap: number }) {
+function UserQuotaSection({ email, windowId, quotaCap, fastPremiumRequests }: { email: string; windowId: string; quotaCap: number; fastPremiumRequests?: number }) {
 	const [rows, setRows] = useState<DailyUsageRow[]>([]);
 
 	useEffect(() => {
@@ -306,8 +306,6 @@ function UserQuotaSection({ email, windowId, quotaCap }: { email: string; window
 			.catch(() => {});
 	}, [email, windowId]);
 
-	const total = rows.reduce((sum, r) => sum + (r.subscriptionIncludedReqs ?? 0), 0);
-
 	if (rows.length === 0) return null;
 
 	return (
@@ -318,7 +316,6 @@ function UserQuotaSection({ email, windowId, quotaCap }: { email: string; window
 					<tr style={{ color: "var(--muted)", textAlign: "left" }}>
 						<th style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }}>Date</th>
 						<th style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }}>Day</th>
-						<th style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }}>Included Reqs</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -327,26 +324,20 @@ function UserQuotaSection({ email, windowId, quotaCap }: { email: string; window
 						const d = new Date(dateStr + "T00:00:00Z");
 						const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()];
 						const weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
-						const used = r.subscriptionIncludedReqs ?? 0;
-						const anomaly = used > quotaCap * 0.3;
 						return (
 							<tr
 								key={dateStr}
-								style={{ color: anomaly ? "var(--coditas-red, #FF174F)" : weekend ? "var(--muted)" : "var(--text)" }}
+								style={{ color: weekend ? "var(--muted)" : "var(--text)" }}
 							>
 								<td style={{ padding: "3px 8px" }}>{dateStr}</td>
 								<td style={{ padding: "3px 8px" }}>{weekend ? `✗ ${dayName}` : `✓ ${dayName}`}</td>
-								<td style={{ padding: "3px 8px" }}>
-									{used}
-									{anomaly && " ⚠"}
-								</td>
 							</tr>
 						);
 					})}
 				</tbody>
 			</table>
 			<div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
-				Total: <strong>{total}</strong> / {quotaCap} included requests
+				Total: <strong>{fastPremiumRequests ?? 0}</strong> / {quotaCap} included requests
 			</div>
 		</div>
 	);
@@ -1997,7 +1988,7 @@ export function Dashboard() {
 										</table>
 									</div>
 								)}
-								{drillDownEmail && <UserQuotaSection email={drillDownEmail} windowId={windowId} quotaCap={quotaCap} />}
+								{drillDownEmail && <UserQuotaSection email={drillDownEmail} windowId={windowId} quotaCap={quotaCap} fastPremiumRequests={spendPremiumByEmail.get(drillDownEmail.toLowerCase())} />}
 								{!drillDownLoading && !drillDownError ? (
 									<div className="drillDownFooter">
 										<span className="muted tiny">Total: {drillDownTotal} events</span>

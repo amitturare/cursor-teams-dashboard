@@ -77,7 +77,7 @@ export function groupIntoRanges(dates: string[]): Array<{ start: string; end: st
   return ranges;
 }
 
-function getDatesInRange(startDate: string, endDate: string): string[] {
+export function getDatesInRange(startDate: string, endDate: string): string[] {
   const dates: string[] = [];
   const toUtcMidnight = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
   const start = toUtcMidnight(startDate);

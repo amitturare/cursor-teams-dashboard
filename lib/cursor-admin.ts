@@ -417,10 +417,13 @@ export async function getUsageEvents(
         if (event.timestamp === undefined) {
           continue;
         }
-        if (!event.userEmail) {
+        // When the API is called with an email filter, events often omit userEmail.
+        // Fall back to the requested email so events are not silently dropped.
+        const resolvedEmail = event.userEmail || options?.email;
+        if (!resolvedEmail) {
           continue;
         }
-        const key = `${event.userEmail}::${event.timestamp}::${event.model || "unknown"}::${event.kind || "unknown"}::${event.requestsCosts || 0}`;
+        const key = `${resolvedEmail}::${event.timestamp}::${event.model || "unknown"}::${event.kind || "unknown"}::${event.requestsCosts || 0}`;
         if (seen.has(key)) {
           continue;
         }
@@ -428,7 +431,7 @@ export async function getUsageEvents(
         allEvents.push({
           ...event,
           timestamp: event.timestamp,
-          userEmail: event.userEmail,
+          userEmail: resolvedEmail,
           model: event.model ?? undefined,
           kind: event.kind ?? undefined,
           maxMode: event.maxMode ?? undefined,

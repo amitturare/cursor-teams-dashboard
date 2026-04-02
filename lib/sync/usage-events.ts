@@ -1,6 +1,6 @@
 import { FILTERED_USAGE_EVENTS_MIN_GAP_MS, getUsageEvents, sleep, type UsageEvent } from "../cursor-admin";
-import { getStaleDates, groupIntoRanges, markSynced } from "../db/queries/sync-log";
-import { upsertUsageEvents, queryUsageEvents } from "../db/queries/usage-events";
+import { getDatesInRange, getStaleDates, groupIntoRanges, markSynced } from "../db/queries/sync-log";
+import { getCoveredDates, upsertUsageEvents, queryUsageEvents } from "../db/queries/usage-events";
 
 /**
  * Serialize all filtered-usage-events sync work so parallel UI calls (quota chart, drill-down, etc.)
@@ -26,7 +26,10 @@ export async function syncAndQueryUsageEvents(
   endDate: string,
   email?: string
 ): Promise<UsageEvent[]> {
-  const staleDates = await getStaleDates("usage_events", startDate, endDate);
+  // Use a per-email sync key so that syncing one user's events does not mark
+  // dates as fresh for other users who have not been fetched yet.
+  const syncKey = email ? `usage_events:${email}` : "usage_events";
+  const staleDates = await getStaleDates(syncKey, startDate, endDate);
 
   if (staleDates.length > 0) {
     const ranges = groupIntoRanges(staleDates);
@@ -40,7 +43,27 @@ export async function syncAndQueryUsageEvents(
         await sleep(FILTERED_USAGE_EVENTS_MIN_GAP_MS);
       }
     }
-    await markSynced("usage_events", staleDates);
+    await markSynced(syncKey, staleDates);
+  }
+
+  // Detect dates the sync_log considers fresh but have no rows in DB for this user.
+  const allDates = getDatesInRange(startDate, endDate);
+  const coveredDates = await getCoveredDates(startDate, endDate, email);
+  const uncoveredDates = allDates.filter((d) => !coveredDates.has(d));
+
+  if (uncoveredDates.length > 0) {
+    const ranges = groupIntoRanges(uncoveredDates);
+    for (let i = 0; i < ranges.length; i += 1) {
+      const range = ranges[i];
+      const startMs = new Date(range.start).getTime();
+      const endMs = new Date(range.end + "T23:59:59Z").getTime();
+      const events = await getUsageEvents(startMs, endMs, email ? { email } : undefined);
+      await upsertUsageEvents(events);
+      if (i < ranges.length - 1) {
+        await sleep(FILTERED_USAGE_EVENTS_MIN_GAP_MS);
+      }
+    }
+    await markSynced(syncKey, uncoveredDates);
   }
 
   return queryUsageEvents(startDate, endDate, email);

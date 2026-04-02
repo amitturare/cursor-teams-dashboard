@@ -1,4 +1,4 @@
-import { and, gte, lte, sql } from "drizzle-orm";
+import { and, gte, lte, sql, SQL } from "drizzle-orm";
 import { db } from "../index";
 import { dailyUsageRows } from "../schema";
 import type { DailyUsageRow } from "../../cursor-admin";
@@ -77,6 +77,15 @@ export async function upsertDailyUsageRows(rows: DailyUsageRow[]): Promise<void>
     const batch = values.slice(i, i + DAILY_USAGE_UPSERT_BATCH_SIZE);
     await db.insert(dailyUsageRows).values(batch).onConflictDoUpdate(dailyUsageConflictUpdate);
   }
+}
+
+/** Returns the distinct YYYY-MM-DD dates that have at least one row in the given range. */
+export async function getCoveredDates(startDate: string, endDate: string): Promise<Set<string>> {
+  const rows = await db
+    .selectDistinct({ date: dailyUsageRows.date })
+    .from(dailyUsageRows)
+    .where(and(gte(dailyUsageRows.date, startDate), lte(dailyUsageRows.date, endDate)));
+  return new Set(rows.map((r) => String(r.date).slice(0, 10)));
 }
 
 export async function queryDailyUsageRows(startDate: string, endDate: string): Promise<DailyUsageRow[]> {
