@@ -866,7 +866,13 @@ export function Dashboard() {
 	return (
 		<div className="appShell">
 			<nav className="sidebar" aria-label="Main navigation">
-				<div className="sidebarLogo">S</div>
+				<div className="sidebarLogo">
+					<img
+						src="https://coditas-brand-assets.web.app/logos/gradient.png"
+						alt="Coditas"
+						className="sidebarLogoImg"
+					/>
+				</div>
 				<div className="sidebarNav">
 					<button
 						type="button"
@@ -951,7 +957,7 @@ export function Dashboard() {
 			<div className="pageInner">
 				<section className="topbar">
 					<div>
-						<h1>AI SparkLine</h1>
+						<h1 className="pageTitle">AI SparkLine</h1>
 					</div>
 					{activeTab === "analytics" ? (
 						<div className="controls">
