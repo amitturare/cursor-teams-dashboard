@@ -97,7 +97,7 @@ const DailyUsageResponseSchema = z.object({
       chatRequests: z.number().optional(),
       agentRequests: z.number().optional(),
       cmdkUsages: z.number().optional(),
-      userId: z.number().optional(),
+      userId: z.coerce.number().optional(),
       subscriptionIncludedReqs: z.number().optional(),
       usageBasedReqs: z.number().optional(),
       apiKeyReqs: z.number().optional(),
@@ -563,7 +563,7 @@ export interface TeamSpendResponse {
 const TeamSpendResponseSchema = z.object({
   teamMemberSpend: z.array(
     z.object({
-      userId: z.number().optional(),
+      userId: z.coerce.number().optional(),
       name: z.string().optional(),
       email: z.string(),
       role: z.string().optional(),
