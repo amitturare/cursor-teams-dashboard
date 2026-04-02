@@ -1,4 +1,4 @@
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../index";
 import { syncLog } from "../schema";
 
@@ -47,7 +47,7 @@ export async function markSynced(dataType: string, dates: string[]): Promise<voi
     .values(dates.map((date) => ({ dataType, date, syncedAt: now })))
     .onConflictDoUpdate({
       target: [syncLog.dataType, syncLog.date],
-      set: { syncedAt: sql`excluded.synced_at` }
+      set: { syncedAt: now }
     });
 }
 

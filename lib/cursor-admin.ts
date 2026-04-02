@@ -344,31 +344,18 @@ export interface RepoBlocklistEntry {
   patterns: string[];
 }
 
+const AuditLogEntrySchema = z
+  .object({
+    timestamp: z.string().optional(),
+    user_email: z.string().optional(),
+    event_type: z.string().optional(),
+    event_data: z.record(z.string(), z.unknown()).optional()
+  })
+  .passthrough();
+
 const AuditLogsResponseSchema = z.object({
-  events: z
-    .array(
-      z
-        .object({
-          timestamp: z.string().optional(),
-          userEmail: z.string().optional(),
-          eventType: z.string().optional(),
-          details: z.record(z.string(), z.unknown()).optional()
-        })
-        .passthrough()
-    )
-    .optional(),
-  auditLogs: z
-    .array(
-      z
-        .object({
-          timestamp: z.string().optional(),
-          userEmail: z.string().optional(),
-          eventType: z.string().optional(),
-          details: z.record(z.string(), z.unknown()).optional()
-        })
-        .passthrough()
-    )
-    .optional(),
+  events: z.array(AuditLogEntrySchema).optional(),
+  auditLogs: z.array(AuditLogEntrySchema).optional(),
   pagination: z
     .object({
       hasNextPage: z.boolean().optional(),
@@ -494,17 +481,25 @@ export async function getAuditLogs(
       );
 
       // API may return field as `events` or `auditLogs`
-      const entries = auditData.events ?? auditData.auditLogs ?? [];
+      let entries = auditData.events;
+      if (!entries) {
+        if (auditData.auditLogs) {
+          console.warn("[cursor-api] audit logs returned under `auditLogs` key (expected `events`)");
+          entries = auditData.auditLogs;
+        } else {
+          entries = [];
+        }
+      }
 
       for (const entry of entries) {
-        const key = `${entry.timestamp ?? ""}::${entry.userEmail ?? ""}::${entry.eventType ?? ""}`;
+        const key = `${entry.timestamp ?? ""}::${entry.user_email ?? ""}::${entry.event_type ?? ""}`;
         if (seen.has(key)) continue;
         seen.add(key);
         allLogs.push({
           timestamp: entry.timestamp,
-          userEmail: entry.userEmail,
-          eventType: entry.eventType,
-          eventData: entry.details
+          userEmail: entry.user_email,
+          eventType: entry.event_type,
+          eventData: entry.event_data
         });
       }
 

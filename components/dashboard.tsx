@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UserWindowMetricRow as MetricRow } from "@/lib/metrics";
 import { QuartileBarChart } from "@/components/widgets/QuartileBarChart";
-import { PlaceholderPanel } from "@/components/widgets/PlaceholderPanel";
 import { AICommittedChart } from "@/components/widgets/AICommittedChart";
 import { QuotaChart } from "@/components/widgets/QuotaChart";
 import { MetricDefinitionsPanel } from "@/components/widgets/MetricDefinitionsPanel";
