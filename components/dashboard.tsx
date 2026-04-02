@@ -965,8 +965,8 @@ export function Dashboard() {
 			<nav className="sidebar" aria-label="Main navigation">
 				<div className="sidebarLogo">
 					<img
-						src="https://coditas-brand-assets.web.app/logos/gradient.png"
-						alt="Coditas"
+						src="https://coditas-brand-assets.web.app/logos/safi-gradient.jpg"
+						alt="Safi"
 						className="sidebarLogoImg"
 					/>
 				</div>
