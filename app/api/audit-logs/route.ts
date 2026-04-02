@@ -1,20 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-
-import { getAuditLogs } from "@/lib/cursor-admin";
+import { syncAndQueryAuditLogs } from "@/lib/sync/audit-logs";
 import type { AuditLogEntry } from "@/lib/cursor-admin";
 import { resolveWindowSelection } from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
-
-const CACHE_TTL_MS = 3 * 60 * 1000;
-
-type CachedAuditLogs = {
-  logs: AuditLogEntry[];
-  expiresAt: number;
-};
-
-const auditCache = new Map<string, CachedAuditLogs>();
 
 const QuerySchema = z.object({
   window: z.string().optional(),
@@ -35,19 +25,10 @@ export async function GET(request: NextRequest) {
     });
 
     const selectedWindow = resolveWindowSelection(query.window);
-    const cacheKey = `${selectedWindow.id}::${query.search ?? ""}::${query.eventTypes ?? ""}`;
-    const cached = auditCache.get(cacheKey);
+    const startDateStr = new Date(selectedWindow.startDate).toISOString().slice(0, 10);
+    const endDateStr = new Date(selectedWindow.endDate).toISOString().slice(0, 10);
 
-    let allLogs: AuditLogEntry[];
-    if (cached && cached.expiresAt > Date.now()) {
-      allLogs = cached.logs;
-    } else {
-      allLogs = await getAuditLogs(selectedWindow.startDate, selectedWindow.endDate, {
-        search: query.search,
-        eventTypes: query.eventTypes ? query.eventTypes.split(",").map((s) => s.trim()) : undefined
-      });
-      auditCache.set(cacheKey, { logs: allLogs, expiresAt: Date.now() + CACHE_TTL_MS });
-    }
+    const allLogs: AuditLogEntry[] = await syncAndQueryAuditLogs(startDateStr, endDateStr);
 
     const total = allLogs.length;
     const start = (query.page - 1) * query.pageSize;

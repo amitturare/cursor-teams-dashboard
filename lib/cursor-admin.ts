@@ -3,7 +3,7 @@ import { z } from "zod";
 const DEFAULT_BASE_URL = "https://api.cursor.com";
 const MAX_DAILY_RANGE_DAYS = 30;
 const MAX_USAGE_EVENTS_RANGE_DAYS = 30;
-const MAX_RETRIES = 4;
+const MAX_RETRIES = 5;
 const BASE_RETRY_DELAY_MS = 1200;
 
 export interface TeamMember {
@@ -17,6 +17,7 @@ export interface TeamMember {
 export interface DailyUsageRow {
   date: number;
   email?: string;
+  userId?: number;
   isActive?: boolean;
   totalLinesAdded?: number;
   totalLinesDeleted?: number;
@@ -31,6 +32,19 @@ export interface DailyUsageRow {
   chatRequests?: number;
   agentRequests?: number;
   cmdkUsages?: number;
+  /**
+   * Raw usage event count for the subscription plan.
+   * ⚠️ WARNING: counts raw usage events, NOT billable request units.
+   * Do NOT use for cost calculations. For billing-accurate data, use
+   * `/teams/filtered-usage-events` and sum `chargedCents`.
+   */
+  subscriptionIncludedReqs?: number;
+  usageBasedReqs?: number;
+  apiKeyReqs?: number;
+  bugbotUsages?: number;
+  applyMostUsedExtension?: string | null;
+  tabMostUsedExtension?: string | null;
+  clientVersion?: string | null;
   mostUsedModel?: string | null;
 }
 
@@ -83,6 +97,14 @@ const DailyUsageResponseSchema = z.object({
       chatRequests: z.number().optional(),
       agentRequests: z.number().optional(),
       cmdkUsages: z.number().optional(),
+      userId: z.number().optional(),
+      subscriptionIncludedReqs: z.number().optional(),
+      usageBasedReqs: z.number().optional(),
+      apiKeyReqs: z.number().optional(),
+      bugbotUsages: z.number().optional(),
+      applyMostUsedExtension: z.string().optional().nullable(),
+      tabMostUsedExtension: z.string().optional().nullable(),
+      clientVersion: z.string().optional().nullable(),
       mostUsedModel: z.string().optional().nullable(),
       email: z.string().email().optional()
     })
@@ -154,7 +176,10 @@ function buildAuthHeader() {
 type JsonRequestOptions = Omit<RequestInit, "headers" | "body"> & {
   json?: unknown;
   searchParams?: Record<string, string | number | undefined>;
+  etag?: string; // If-None-Match value from previous response
 };
+
+type CursorResponse<T> = { data: T; etag?: string };
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -183,7 +208,11 @@ function formatCursorErrorMessage(status: number, body: string): string {
   return `Cursor API returned ${status}. Try again or adjust the request.`;
 }
 
-async function cursorRequest<T>(path: string, options: JsonRequestOptions, schema: z.ZodType<T>): Promise<T> {
+async function cursorRequest<T>(
+  path: string,
+  options: JsonRequestOptions,
+  schema: z.ZodType<T>
+): Promise<CursorResponse<T>> {
   let url = `${getBaseUrl()}${path}`;
 
   if (options.searchParams) {
@@ -196,23 +225,38 @@ async function cursorRequest<T>(path: string, options: JsonRequestOptions, schem
   }
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    const headers: Record<string, string> = {
+      Authorization: buildAuthHeader(),
+      "Content-Type": "application/json"
+    };
+    if (options.etag) {
+      headers["If-None-Match"] = options.etag;
+    }
+
     const response = await fetch(url, {
       ...options,
-      headers: {
-        Authorization: buildAuthHeader(),
-        "Content-Type": "application/json"
-      },
+      headers,
       body: options.json === undefined ? undefined : JSON.stringify(options.json),
       cache: "no-store"
     });
 
+    if (response.status === 304) {
+      // Data unchanged — caller should use cached value
+      return { data: null as unknown as T, etag: options.etag };
+    }
+
     if (response.ok) {
       const json = await response.json();
-      return schema.parse(json);
+      const etag = response.headers.get("etag") ?? undefined;
+      return { data: schema.parse(json), etag };
     }
 
     if (response.status === 429 && attempt < MAX_RETRIES) {
-      await sleep(getRetryDelayMs(response, attempt));
+      const delay = getRetryDelayMs(response, attempt);
+      console.warn(
+        `[cursor-api] 429 rate limited — endpoint: ${path}, attempt: ${attempt + 1}/${MAX_RETRIES}, retrying in ${delay}ms`
+      );
+      await sleep(delay);
       continue;
     }
 
@@ -220,7 +264,7 @@ async function cursorRequest<T>(path: string, options: JsonRequestOptions, schem
     throw new Error(formatCursorErrorMessage(response.status, body));
   }
 
-  throw new Error(`Cursor API ${path} failed after retries`);
+  throw new Error(`Cursor API ${path} failed after ${MAX_RETRIES} retries`);
 }
 
 function splitIntoDateRanges(startDate: number, endDate: number, maxDays: number) {
@@ -238,8 +282,8 @@ function splitIntoDateRanges(startDate: number, endDate: number, maxDays: number
 }
 
 export async function getTeamMembers(): Promise<TeamMember[]> {
-  const response = await cursorRequest("/teams/members", { method: "GET" }, TeamMembersResponseSchema);
-  return response.teamMembers;
+  const { data } = await cursorRequest("/teams/members", { method: "GET" }, TeamMembersResponseSchema);
+  return data.teamMembers;
 }
 
 export async function getDailyUsageData(startDate: number, endDate: number): Promise<DailyUsageRow[]> {
@@ -253,7 +297,7 @@ export async function getDailyUsageData(startDate: number, endDate: number): Pro
     let hasNextPage = true;
 
     while (hasNextPage) {
-      const response = await cursorRequest(
+      const { data: responseData } = await cursorRequest(
         "/teams/daily-usage-data",
         {
           method: "POST",
@@ -267,7 +311,7 @@ export async function getDailyUsageData(startDate: number, endDate: number): Pro
         DailyUsageResponseSchema
       );
 
-      for (const row of response.data) {
+      for (const row of responseData.data) {
         if (!row.email) continue;
         const key = `${row.email}::${row.date}`;
         if (seen.has(key)) continue;
@@ -275,7 +319,7 @@ export async function getDailyUsageData(startDate: number, endDate: number): Pro
         allRows.push(row);
       }
 
-      hasNextPage = Boolean(response.pagination?.hasNextPage);
+      hasNextPage = Boolean(responseData.pagination?.hasNextPage);
       page += 1;
 
       if (page > 1000) {
@@ -291,7 +335,7 @@ export interface AuditLogEntry {
   timestamp?: string;
   userEmail?: string;
   eventType?: string;
-  details?: Record<string, unknown>;
+  eventData?: Record<string, unknown>;
 }
 
 export interface RepoBlocklistEntry {
@@ -300,31 +344,18 @@ export interface RepoBlocklistEntry {
   patterns: string[];
 }
 
+const AuditLogEntrySchema = z
+  .object({
+    timestamp: z.string().optional(),
+    user_email: z.string().optional(),
+    event_type: z.string().optional(),
+    event_data: z.record(z.string(), z.unknown()).optional()
+  })
+  .passthrough();
+
 const AuditLogsResponseSchema = z.object({
-  events: z
-    .array(
-      z
-        .object({
-          timestamp: z.string().optional(),
-          userEmail: z.string().optional(),
-          eventType: z.string().optional(),
-          details: z.record(z.string(), z.unknown()).optional()
-        })
-        .passthrough()
-    )
-    .optional(),
-  auditLogs: z
-    .array(
-      z
-        .object({
-          timestamp: z.string().optional(),
-          userEmail: z.string().optional(),
-          eventType: z.string().optional(),
-          details: z.record(z.string(), z.unknown()).optional()
-        })
-        .passthrough()
-    )
-    .optional(),
+  events: z.array(AuditLogEntrySchema).optional(),
+  auditLogs: z.array(AuditLogEntrySchema).optional(),
   pagination: z
     .object({
       hasNextPage: z.boolean().optional(),
@@ -364,7 +395,7 @@ export async function getUsageEvents(
     let hasNextPage = true;
 
     while (hasNextPage) {
-      const response = await cursorRequest(
+      const { data: eventsData } = await cursorRequest(
         "/teams/filtered-usage-events",
         {
           method: "POST",
@@ -379,7 +410,7 @@ export async function getUsageEvents(
         UsageEventsResponseSchema
       );
 
-      for (const event of response.usageEvents) {
+      for (const event of eventsData.usageEvents) {
         if (event.timestamp === undefined) {
           continue;
         }
@@ -405,7 +436,7 @@ export async function getUsageEvents(
         });
       }
 
-      hasNextPage = Boolean(response.pagination?.hasNextPage);
+      hasNextPage = Boolean(eventsData.pagination?.hasNextPage);
       page += 1;
 
       if (page > 1000) {
@@ -432,7 +463,7 @@ export async function getAuditLogs(
     let hasNextPage = true;
 
     while (hasNextPage) {
-      const response = await cursorRequest(
+      const { data: auditData } = await cursorRequest(
         "/teams/audit-logs",
         {
           method: "GET",
@@ -450,21 +481,29 @@ export async function getAuditLogs(
       );
 
       // API may return field as `events` or `auditLogs`
-      const entries = response.events ?? response.auditLogs ?? [];
+      let entries = auditData.events;
+      if (!entries) {
+        if (auditData.auditLogs) {
+          console.warn("[cursor-api] audit logs returned under `auditLogs` key (expected `events`)");
+          entries = auditData.auditLogs;
+        } else {
+          entries = [];
+        }
+      }
 
       for (const entry of entries) {
-        const key = `${entry.timestamp ?? ""}::${entry.userEmail ?? ""}::${entry.eventType ?? ""}`;
+        const key = `${entry.timestamp ?? ""}::${entry.user_email ?? ""}::${entry.event_type ?? ""}`;
         if (seen.has(key)) continue;
         seen.add(key);
         allLogs.push({
           timestamp: entry.timestamp,
-          userEmail: entry.userEmail,
-          eventType: entry.eventType,
-          details: entry.details
+          userEmail: entry.user_email,
+          eventType: entry.event_type,
+          eventData: entry.event_data
         });
       }
 
-      hasNextPage = Boolean(response.pagination?.hasNextPage);
+      hasNextPage = Boolean(auditData.pagination?.hasNextPage);
       page += 1;
 
       if (page > 1000) {
@@ -477,12 +516,12 @@ export async function getAuditLogs(
 }
 
 export async function getRepoBlocklists(): Promise<RepoBlocklistEntry[]> {
-  const response = await cursorRequest(
+  const { data } = await cursorRequest(
     "/settings/repo-blocklists/repos",
     { method: "GET" },
     RepoBlocklistsResponseSchema
   );
-  return response.repos as RepoBlocklistEntry[];
+  return data.repos as RepoBlocklistEntry[];
 }
 
 export async function upsertRepoBlocklist(url: string, patterns: string[]): Promise<void> {
@@ -502,4 +541,75 @@ export async function deleteRepoBlocklist(repoId: string): Promise<void> {
     { method: "DELETE" },
     DeleteResponseSchema
   );
+}
+
+export interface TeamSpendEntry {
+  userId?: number;
+  name?: string;
+  email: string;
+  role?: string;
+  spendCents?: number;
+  overallSpendCents?: number;
+  fastPremiumRequests?: number;
+  hardLimitOverrideDollars?: number;
+  monthlyLimitDollars?: number | null;
+}
+
+export interface TeamSpendResponse {
+  entries: TeamSpendEntry[];
+  billingCycleStart: number;
+}
+
+const TeamSpendResponseSchema = z.object({
+  teamMemberSpend: z.array(
+    z.object({
+      userId: z.number().optional(),
+      name: z.string().optional(),
+      email: z.string(),
+      role: z.string().optional(),
+      spendCents: z.number().optional(),
+      overallSpendCents: z.number().optional(),
+      fastPremiumRequests: z.number().optional(),
+      hardLimitOverrideDollars: z.number().optional(),
+      monthlyLimitDollars: z.number().nullable().optional()
+    }).passthrough()
+  ),
+  subscriptionCycleStart: z.number().optional(),
+  totalMembers: z.number().optional(),
+  totalPages: z.number().optional()
+});
+
+export async function getTeamSpend(): Promise<TeamSpendResponse> {
+  const allEntries: TeamSpendEntry[] = [];
+  let page = 1;
+  let totalPages = 1;
+  let billingCycleStart = 0;
+
+  while (page <= totalPages) {
+    const { data } = await cursorRequest(
+      "/teams/spend",
+      { method: "POST", json: { page, pageSize: 200 } },
+      TeamSpendResponseSchema
+    );
+    if (page === 1) {
+      billingCycleStart = data.subscriptionCycleStart ?? 0;
+      totalPages = data.totalPages ?? 1;
+    }
+    for (const entry of data.teamMemberSpend) {
+      allEntries.push({
+        userId: entry.userId,
+        name: entry.name,
+        email: entry.email,
+        role: entry.role,
+        spendCents: entry.spendCents,
+        overallSpendCents: entry.overallSpendCents,
+        fastPremiumRequests: entry.fastPremiumRequests,
+        hardLimitOverrideDollars: entry.hardLimitOverrideDollars,
+        monthlyLimitDollars: entry.monthlyLimitDollars
+      });
+    }
+    page += 1;
+  }
+
+  return { entries: allEntries, billingCycleStart };
 }
