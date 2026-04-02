@@ -4,6 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { UserWindowMetricRow as MetricRow } from "@/lib/metrics";
 import { QuartileBarChart } from "@/components/widgets/QuartileBarChart";
 import { PlaceholderPanel } from "@/components/widgets/PlaceholderPanel";
+import { AICommittedChart } from "@/components/widgets/AICommittedChart";
+import { QuotaChart } from "@/components/widgets/QuotaChart";
+import { MetricDefinitionsPanel } from "@/components/widgets/MetricDefinitionsPanel";
+import { OverallScorePill } from "@/components/widgets/OverallScorePill";
+import type { DailyUsageRow } from "@/lib/cursor-admin";
 import {
 	type WidgetMetric,
 	type WidgetMetricAssignment,
@@ -24,7 +29,7 @@ interface ApiResponse {
 	rows: MetricRow[];
 	definitions: MetricDefinition[];
 	cached?: boolean;
-	selectedWindow: { id: string; label: string; startDate: number; endDate: number };
+	selectedWindow: { id: string; label: string; startDate: number; endDate: number; totalDays: number };
 	availableWindows: Array<{ id: string; label: string }>;
 }
 
@@ -272,6 +277,65 @@ function Sparkline({ points, width = 80, height = 24 }: { points: MetricRow["dai
 	);
 }
 
+function UserQuotaSection({
+	email,
+	windowId,
+	quotaCap
+}: {
+	email: string;
+	windowId: string;
+	quotaCap: number;
+}) {
+	const [rows, setRows] = useState<DailyUsageRow[]>([]);
+
+	useEffect(() => {
+		fetch(`/api/daily-usage?window=${windowId}&email=${encodeURIComponent(email)}`)
+			.then((r) => r.json())
+			.then((data: { rows: DailyUsageRow[] }) => { if (data.rows) setRows(data.rows); })
+			.catch(() => {});
+	}, [email, windowId]);
+
+	const total = rows.reduce((sum, r) => sum + (r.subscriptionIncludedReqs ?? 0), 0);
+
+	if (rows.length === 0) return null;
+
+	return (
+		<div style={{ marginTop: 16, padding: "0 16px 16px" }}>
+			<h3 style={{ fontFamily: "var(--font-heading)", fontSize: 13, marginBottom: 8 }}>
+				Quota Usage
+			</h3>
+			<table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+				<thead>
+					<tr style={{ color: "var(--muted)", textAlign: "left" }}>
+						<th style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }}>Date</th>
+						<th style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }}>Day</th>
+						<th style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }}>Included Reqs</th>
+					</tr>
+				</thead>
+				<tbody>
+					{rows.map((r) => {
+						const dateStr = new Date(r.date).toISOString().slice(0, 10);
+						const d = new Date(dateStr + "T00:00:00Z");
+						const dayName = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getUTCDay()];
+						const weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
+						const used = r.subscriptionIncludedReqs ?? 0;
+						const anomaly = used > quotaCap * 0.30;
+						return (
+							<tr key={dateStr} style={{ color: anomaly ? "var(--coditas-red, #FF174F)" : weekend ? "var(--muted)" : "var(--text)" }}>
+								<td style={{ padding: "3px 8px" }}>{dateStr}</td>
+								<td style={{ padding: "3px 8px" }}>{weekend ? `✗ ${dayName}` : `✓ ${dayName}`}</td>
+								<td style={{ padding: "3px 8px" }}>{used}{anomaly && " ⚠"}</td>
+							</tr>
+						);
+					})}
+				</tbody>
+			</table>
+			<div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
+				Total: <strong>{total}</strong> / {quotaCap} included requests
+			</div>
+		</div>
+	);
+}
 
 export function Dashboard() {
 	const [windowId, setWindowId] = useState("past-7d");
@@ -303,6 +367,9 @@ export function Dashboard() {
 	const [drillDownPage, setDrillDownPage] = useState(1);
 	const [drillDownTotal, setDrillDownTotal] = useState(0);
 	const [drillDownTotalPages, setDrillDownTotalPages] = useState(1);
+	const [quotaCap, setQuotaCap] = useState<number>(500);
+	const [dailyRows, setDailyRows] = useState<DailyUsageRow[]>([]);
+	const [billingCycleResetDate, setBillingCycleResetDate] = useState<string | undefined>(undefined);
 	// Feature 4 — Audit Log
 	const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
 	const [auditLoading, setAuditLoading] = useState(false);
@@ -455,6 +522,24 @@ export function Dashboard() {
 		loadLogs();
 		return () => { cancelled = true; };
 	}, [activeTab, windowId, auditSearch, auditEventTypes, auditPage]);
+
+	// Load quota cap and daily rows when window changes
+	useEffect(() => {
+		fetch("/api/settings?key=quota_cap")
+			.then((r) => r.json())
+			.then((d: { value: string }) => {
+				const parsed = parseInt(d.value, 10);
+				if (!isNaN(parsed)) setQuotaCap(parsed);
+			})
+			.catch(() => {});
+
+		fetch(`/api/daily-usage?window=${windowId}`)
+			.then((r) => r.json())
+			.then((d: { rows: DailyUsageRow[] }) => {
+				if (d.rows) setDailyRows(d.rows);
+			})
+			.catch(() => {});
+	}, [windowId]);
 
 	// Feature 5 — load repo blocklists when security tab opens
 	useEffect(() => {
@@ -845,6 +930,15 @@ export function Dashboard() {
 		}
 	}
 
+	async function handleQuotaCapChange(cap: number) {
+		setQuotaCap(cap);
+		await fetch("/api/settings", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ key: "quota_cap", value: String(cap) })
+		});
+	}
+
 	async function deleteRepo(repoId: string) {
 		setSecurityMutating(true);
 		setSecurityMutateError(null);
@@ -1009,8 +1103,21 @@ export function Dashboard() {
 							</div>
 							<div className="widgetSection">
 								<div className="widgetRowFixed">
-									<PlaceholderPanel title="Work Type" />
-									<PlaceholderPanel title="Categories" />
+									{data?.selectedWindow && (
+										<AICommittedChart
+											rows={effectiveRows}
+											window={data.selectedWindow}
+										/>
+									)}
+									{data?.selectedWindow && (
+										<QuotaChart
+											dailyRows={dailyRows}
+											window={data.selectedWindow}
+											quotaCap={quotaCap}
+											onQuotaCapChange={handleQuotaCapChange}
+											billingCycleResetDate={billingCycleResetDate}
+										/>
+									)}
 								</div>
 								<div className="widgetRowChangeable">
 									{widgets.map((w, i) => (
@@ -1329,6 +1436,7 @@ export function Dashboard() {
 								<thead>
 									<tr>
 										<th>User</th>
+										<th>Score</th>
 										<th>Favorite Model</th>
 										<th>Trend</th>
 										<th>Usage</th>
@@ -1341,7 +1449,7 @@ export function Dashboard() {
 								<tbody>
 									{effectiveRows.length === 0 ? (
 										<tr>
-											<td colSpan={8} className="muted">
+											<td colSpan={9} className="muted">
 												No data for the current filter.
 											</td>
 										</tr>
@@ -1365,6 +1473,12 @@ export function Dashboard() {
 														<span className="muted tiny">{row.userEmail}</span>
 													</div>
 												</td>
+												<td>
+													<OverallScorePill
+														row={row}
+														teamMaxUsage={Math.max(...effectiveRows.map((r) => r.usageCount), 1)}
+													/>
+												</td>
 												<td>{row.favoriteModel}</td>
 												<td><Sparkline points={row.dailyTrend} /></td>
 												<td>{row.usageCount}</td>
@@ -1378,6 +1492,7 @@ export function Dashboard() {
 								</tbody>
 							</table>
 						</div>
+						<MetricDefinitionsPanel />
 					</>
 				) : null}
 
@@ -1770,6 +1885,13 @@ export function Dashboard() {
 										</tbody>
 									</table>
 								</div>
+							)}
+							{drillDownEmail && (
+								<UserQuotaSection
+									email={drillDownEmail}
+									windowId={windowId}
+									quotaCap={quotaCap}
+								/>
 							)}
 							{!drillDownLoading && !drillDownError ? (
 								<div className="drillDownFooter">
